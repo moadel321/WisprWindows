@@ -204,7 +204,7 @@ def test_end_to_end(model_path, test_duration=10):
     vad_processor.set_callbacks(
         on_speech_detected=on_speech_detected
     )
-    vad_processor.set_speech_segment_callback(on_speech_segment)
+    vad_processor.on_speech_end_callback = on_speech_segment    
     
     # Start processing
     print("\nPreparing to record. Please focus a text field and speak clearly.")

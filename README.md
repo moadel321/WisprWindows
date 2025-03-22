@@ -112,7 +112,7 @@ python run.py --test --model-path ~/whisper-models/distil-large-v3
 python run.py --performance --model-path ~/whisper-models/distil-large-v3
 
 # Test Faster Whisper specifically
-python tests/test_faster_whisper.py --model-path ~/whisper-models/distil-large-v3 --audio-file path/to/test.mp3
+python tests/test_faster_whisper.py --model-path ~/whisper-models/distil-large-v3  #--audio-file path/to/test.mp3
 ```
 
 ## Troubleshooting

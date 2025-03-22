@@ -6,7 +6,7 @@ Audio processing module for the Speech-to-Text application
 """
 
 import logging
-import numpy as np
+import numpy as np  # Import numpy globally so it's available throughout the class
 import wave
 import os
 from typing import Optional, Dict, Any, Tuple, List
@@ -29,6 +29,10 @@ class AudioProcessor:
         self.logger = logging.getLogger(__name__)
         self.sample_rate = sample_rate
         self.channels = channels
+        self.frames = []
+        self.stream = None
+        self.pyaudio_instance = None
+        self.is_recording = False
         self.logger.info(f"AudioProcessor initialized (sample_rate={sample_rate}, channels={channels})")
     
     def preprocess_audio(self, audio_data: np.ndarray, 
@@ -249,3 +253,105 @@ class AudioProcessor:
         except Exception as e:
             self.logger.error(f"Error splitting audio: {str(e)}")
             return [audio_data]  # Return original as single chunk on error 
+    
+    def start_recording(self, mic_manager):
+        """
+        Start recording audio from the selected microphone
+        
+        Args:
+            mic_manager: MicrophoneManager instance with selected microphone
+        """
+        import pyaudio  # Import here to avoid dependency if not used
+        
+        try:
+            self.logger.info("Starting audio recording")
+            self.is_recording = True
+            
+            # Initialize PyAudio if needed
+            if self.pyaudio_instance is None:
+                self.pyaudio_instance = pyaudio.PyAudio()
+            
+            # Get the microphone ID from the current_mic attribute instead of calling a method
+            if not hasattr(mic_manager, 'current_mic') or mic_manager.current_mic is None:
+                raise ValueError("No microphone selected in MicrophoneManager")
+            
+            mic_id = mic_manager.current_mic["id"]
+            
+            # Clear previous frames
+            self.frames = []
+            
+            # Open audio stream
+            self.stream = self.pyaudio_instance.open(
+                format=pyaudio.paInt16,
+                channels=self.channels,
+                rate=self.sample_rate,
+                input=True,
+                input_device_index=mic_id,
+                frames_per_buffer=1024,
+                stream_callback=self._audio_callback
+            )
+            
+            # Start the stream
+            self.stream.start_stream()
+            self.logger.info("Audio recording started")
+            
+        except Exception as e:
+            self.logger.error(f"Error starting recording: {str(e)}")
+            self.stop_recording()
+            raise
+    
+    def _audio_callback(self, in_data, frame_count, time_info, status):
+        """
+        Callback function for audio stream
+        
+        Args:
+            in_data: Input audio data
+            frame_count: Number of frames
+            time_info: Time information
+            status: Stream status
+            
+        Returns:
+            tuple: (None, pyaudio.paContinue)
+        """
+        import pyaudio  # Import here to avoid dependency if not used
+        
+        if self.is_recording:
+            self.frames.append(in_data)
+            return (None, pyaudio.paContinue)
+        return (None, pyaudio.paComplete)
+    
+    def stop_recording(self):
+        """
+        Stop recording audio
+        
+        Returns:
+            np.ndarray: Recorded audio data
+        """
+        self.logger.info("Stopping audio recording")
+        self.is_recording = False
+        
+        try:
+            # Stop and close the stream
+            if self.stream is not None:
+                if self.stream.is_active():
+                    self.stream.stop_stream()
+                self.stream.close()
+                self.stream = None
+            
+            # Cleanup PyAudio
+            if self.pyaudio_instance is not None:
+                self.pyaudio_instance.terminate()
+                self.pyaudio_instance = None
+            
+            # Convert frames to numpy array
+            if self.frames:
+                audio_data = np.frombuffer(b''.join(self.frames), dtype=np.int16)
+                self.logger.info(f"Recording stopped, collected {len(audio_data)} samples")
+                return audio_data
+            else:
+                self.logger.warning("No audio data recorded")
+                return np.array([], dtype=np.int16)
+                
+        except Exception as e:
+            self.logger.error(f"Error stopping recording: {str(e)}")
+            return np.array([], dtype=np.int16) 
