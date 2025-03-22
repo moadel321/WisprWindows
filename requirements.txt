@@ -1,0 +1,34 @@
+# Core dependencies
+PyQt6>=6.4.0
+pywinauto>=0.6.8
+pywin32>=306
+comtypes>=1.1.14
+
+# Audio processing
+PyAudio>=0.2.13
+numpy>=1.22.0
+scipy>=1.8.0
+soundfile>=0.11.0
+av>=10.0.0  # Required for audio decoding in faster-whisper
+
+# Speech recognition
+torch>=2.0.0 --index-url https://download.pytorch.org/whl/cu118  # CUDA 11.8 support
+torchaudio>=2.0.0 --index-url https://download.pytorch.org/whl/cu118
+faster-whisper>=0.10.0  # Faster Whisper implementation
+ctranslate2>=3.24.0  # Required by faster-whisper, version for CUDA compatibility
+huggingface_hub>=0.15.0  # For downloading models
+nvidia-cublas-cu12>=12.1.3.1  # CUDA support
+nvidia-cudnn-cu12>=8.9.2.26  # CUDA support
+
+# Voice activity detection
+# Note: Silero VAD is loaded via torch hub, no separate package needed
+
+# Utilities
+pyyaml>=6.0
+python-dotenv>=1.0.0
+requests>=2.28.0
+Pillow>=10.0.0  # For icon generation and image processing
+
+# Testing
+pytest>=7.3.1  # For unit and integration testing
+psutil>=5.9.0  # For monitoring system resources during tests
