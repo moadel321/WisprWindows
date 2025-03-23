@@ -2,29 +2,27 @@
 # -*- coding: utf-8 -*-
 
 """
-Run script for the Speech-to-Text application
+Bootstrap script to run the Speech-to-Text application
 """
 
 import sys
 import os
 import argparse
+import logging
+from pathlib import Path
+
+# Add root directory to path
+sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 def main():
-    """Run the Speech-to-Text application"""
-    # Create parser
-    parser = argparse.ArgumentParser(description="Run the Speech-to-Text application")
-    
-    # Add arguments
+    """Main entry point to launch the application"""
+    # Parse command line arguments
+    parser = argparse.ArgumentParser(description="Speech-to-Text Application")
     parser.add_argument(
         "--model-path", 
         type=str, 
-        help="Path to Whisper model directory", 
+        help="Path to Whisper model directory",
         default=os.path.expanduser("~/whisper-models")
-    )
-    parser.add_argument(
-        "--no-gui", 
-        action="store_true", 
-        help="Run in command-line mode (no GUI)"
     )
     parser.add_argument(
         "--debug", 
@@ -34,7 +32,7 @@ def main():
     parser.add_argument(
         "--test", 
         action="store_true", 
-        help="Run tests instead of the application"
+        help="Run system tests instead of the application"
     )
     parser.add_argument(
         "--performance", 
@@ -42,32 +40,38 @@ def main():
         help="Run performance tests instead of the application"
     )
     
-    # Parse arguments
     args = parser.parse_args()
     
-    # Set up environment variables
-    os.environ["STT_MODEL_PATH"] = args.model_path
+    # Set model directory in environment
+    os.environ["WHISPER_MODEL_PATH"] = args.model_path
     
-    if args.debug:
-        os.environ["STT_DEBUG"] = "1"
+    # Set log level
+    log_level = logging.DEBUG if args.debug else logging.INFO
+    os.environ["STT_LOG_LEVEL"] = str(log_level)
     
-    # Run the appropriate module
-    if args.test:
-        print("Running system tests...")
-        from tests.system_test import main as test_main
-        return test_main(args.model_path)
-    elif args.performance:
-        print("Running performance tests...")
-        from tests.performance_test import main as perf_main
-        return perf_main(args.model_path)
-    else:
-        print("Starting Speech-to-Text application...")
-        if args.no_gui:
-            print("Command-line mode not implemented yet")
-            return 1
-        else:
-            from src.main import main as app_main
-            return app_main()
+    try:
+        # Run tests if requested
+        if args.test:
+            from tests.system_test import run_system_tests
+            run_system_tests(args.model_path)
+            return
+            
+        if args.performance:
+            from tests.performance_test import run_performance_tests
+            run_performance_tests(args.model_path)
+            return
+        
+        # Launch application
+        from src.main import main as app_main
+        return app_main()
+        
+    except ImportError as e:
+        print(f"Error importing modules: {e}")
+        print("Make sure all dependencies are installed. See requirements.txt")
+        return 1
+    except Exception as e:
+        print(f"Error launching application: {e}")
+        return 1
 
 
 if __name__ == "__main__":

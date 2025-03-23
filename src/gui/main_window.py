@@ -10,17 +10,17 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QPushButton, QComboBox, QLabel, QTabWidget,
     QTextEdit, QStatusBar, QListWidget, QListWidgetItem,
-    QSplitter, QApplication, QMessageBox, QMenu, QMenuBar, QAction, QGroupBox
+    QSplitter, QApplication, QMessageBox, QMenu, QMenuBar, QGroupBox
 )
 from PyQt6.QtCore import Qt, QSize, pyqtSignal, QTimer
-from PyQt6.QtGui import QIcon, QFont, QColor
+from PyQt6.QtGui import QIcon, QFont, QColor, QAction
 
-from config.settings import AppSettings
-from gui.app_controller import AppController
-from gui.permission_dialog import PermissionDialog
-from gui.settings_dialog import SettingsDialog
-from gui.model_info_dialog import ModelInfoDialog
-from utils.logger import UILogHandler
+from src.config.settings import AppSettings
+from src.gui.app_controller import AppController
+from src.gui.permission_dialog import PermissionDialog
+from src.gui.settings_dialog import SettingsDialog
+from src.gui.model_info_dialog import ModelInfoDialog
+from src.utils.logger import UILogHandler
 from src.utils.constants import APP_VERSION
 
 
@@ -57,9 +57,15 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Speech-to-Text Tool")
         self.setMinimumSize(800, 600)
         
-        # Initialize UI
+        # Initialize UI and create menu - must be done before updating status
         self._init_ui()
         self._create_menu()
+        
+        # Load microphones
+        self._load_microphones()
+        
+        # Now it's safe to update model status since menu is created
+        self._update_model_status(False)
         
         # Visual feedback for recording
         self.recording_indicator_timer = QTimer(self)
@@ -76,45 +82,101 @@ class MainWindow(QMainWindow):
     
     def _init_ui(self):
         """Initialize the user interface components"""
-        # Set application stylesheet for consistent appearance
+        # Set application stylesheet for consistent appearance and dark mode
         self.setStyleSheet("""
-            QMainWindow {
-                background-color: #f5f5f5;
+            QMainWindow, QDialog, QWidget {
+                background-color: #2d2d2d;
+                color: #e0e0e0;
             }
             QLabel {
-                color: #333333;
+                color: #e0e0e0;
             }
             QPushButton {
-                background-color: #e0e0e0;
-                border: 1px solid #b0b0b0;
+                background-color: #3d3d3d;
+                border: 1px solid #5d5d5d;
                 border-radius: 4px;
                 padding: 4px 12px;
+                color: #e0e0e0;
             }
             QPushButton:hover {
-                background-color: #d0d0d0;
+                background-color: #4d4d4d;
             }
             QPushButton:pressed {
-                background-color: #c0c0c0;
+                background-color: #5a5a5a;
             }
             QPushButton:disabled {
-                background-color: #f0f0f0;
-                color: #a0a0a0;
+                background-color: #353535;
+                color: #707070;
             }
-            QListWidget {
-                border: 1px solid #c0c0c0;
+            QListWidget, QTextEdit, QComboBox {
+                border: 1px solid #5d5d5d;
                 border-radius: 4px;
-                background-color: white;
-            }
-            QTextEdit {
-                border: 1px solid #c0c0c0;
-                border-radius: 4px;
-                background-color: white;
+                background-color: #333333;
+                color: #e0e0e0;
             }
             QComboBox {
-                border: 1px solid #c0c0c0;
-                border-radius: 4px;
-                background-color: white;
                 min-width: 200px;
+            }
+            QComboBox::drop-down {
+                border: 0px;
+            }
+            QComboBox::down-arrow {
+                image: url(:/icons/down_arrow.png);
+                width: 12px;
+                height: 12px;
+            }
+            QComboBox QAbstractItemView {
+                background-color: #333333;
+                color: #e0e0e0;
+                selection-background-color: #505050;
+            }
+            QTabWidget::pane {
+                border: 1px solid #3d3d3d;
+                background-color: #2d2d2d;
+            }
+            QTabBar::tab {
+                background-color: #3d3d3d;
+                color: #b0b0b0;
+                padding: 5px 10px;
+                border-top-left-radius: 3px;
+                border-top-right-radius: 3px;
+            }
+            QTabBar::tab:selected {
+                background-color: #505050;
+                color: #ffffff;
+            }
+            QTabBar::tab:hover:!selected {
+                background-color: #454545;
+            }
+            QGroupBox {
+                border: 1px solid #5d5d5d;
+                border-radius: 5px;
+                margin-top: 1ex;
+                color: #e0e0e0;
+            }
+            QGroupBox::title {
+                subcontrol-origin: margin;
+                subcontrol-position: top center;
+                padding: 0 3px;
+            }
+            QStatusBar {
+                background-color: #252525;
+                color: #b0b0b0;
+            }
+            QMenu {
+                background-color: #2d2d2d;
+                color: #e0e0e0;
+                border: 1px solid #5d5d5d;
+            }
+            QMenu::item:selected {
+                background-color: #505050;
+            }
+            QMenuBar {
+                background-color: #252525;
+                color: #e0e0e0;
+            }
+            QMenuBar::item:selected {
+                background-color: #404040;
             }
         """)
         
@@ -292,15 +354,6 @@ class MainWindow(QMainWindow):
         version_label = QLabel(f"v{APP_VERSION}")
         version_label.setStyleSheet("color: #888888;")
         status_bar.addPermanentWidget(version_label)
-        
-        # Load microphones
-        self._load_microphones()
-        
-        # Load initial state based on settings
-        self._update_model_status(False)
-        
-        # Show initial info in the error log
-        self.logger.info("Application initialized and ready")
     
     def _create_menu(self):
         """Create the application menu"""
@@ -630,8 +683,11 @@ class MainWindow(QMainWindow):
         if is_loaded:
             self.model_status_label.setText("Model: Loaded")
             self.model_status_label.setStyleSheet("color: green;")
-            self.load_model_action.setEnabled(False)
-            self.unload_model_action.setEnabled(True)
+            # Update action states if they exist
+            if hasattr(self, 'load_model_action'):
+                self.load_model_action.setEnabled(False)
+            if hasattr(self, 'unload_model_action'):
+                self.unload_model_action.setEnabled(True)
         else:
             if error_message:
                 self.model_status_label.setText("Model: Error")
@@ -641,8 +697,11 @@ class MainWindow(QMainWindow):
                 self.model_status_label.setText("Model: Not Loaded")
                 self.model_status_label.setStyleSheet("color: orange;")
             
-            self.load_model_action.setEnabled(True)
-            self.unload_model_action.setEnabled(False)
+            # Update action states if they exist
+            if hasattr(self, 'load_model_action'):
+                self.load_model_action.setEnabled(True)
+            if hasattr(self, 'unload_model_action'):
+                self.unload_model_action.setEnabled(False)
     
     def _update_vad_info(self, message: str, is_speech: bool):
         """

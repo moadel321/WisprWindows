@@ -14,11 +14,11 @@ from PyQt6.QtWidgets import QApplication, QMessageBox
 from PyQt6.QtCore import QCoreApplication, Qt
 from PyQt6.QtGui import QFont, QIcon
 
-from config.settings import AppSettings
-from gui.main_window import MainWindow
-from utils.logger import setup_logger
+from src.config.settings import AppSettings
+from src.gui.main_window import MainWindow
+from src.utils.logger import setup_logger
 from src.utils.constants import APP_NAME, APP_VERSION
-from audio.windows_permission import is_admin, check_microphone_permission
+from src.audio.windows_permission import is_admin, check_microphone_permission
 
 
 def exception_hook(exc_type, exc_value, exc_traceback):
@@ -55,18 +55,28 @@ def main():
     QCoreApplication.setOrganizationName("STT")
     QCoreApplication.setApplicationVersion(APP_VERSION)
     
-    # Configure Qt for high DPI displays
+    # Configure Qt for high DPI displays (using a more compatible approach)
     os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "1"
-    QApplication.setHighDpiScaleFactorRoundingPolicy(
-        Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
-    )
-    QApplication.setAttribute(Qt.ApplicationAttribute.AA_EnableHighDpiScaling, True)
-    QApplication.setAttribute(Qt.ApplicationAttribute.AA_UseHighDpiPixmaps, True)
     
     # Set up logging
     setup_logger()
     logger = logging.getLogger(__name__)
     logger.info(f"Application starting... (v{APP_VERSION})")
+    
+    # Use try/except to handle different PyQt6 versions
+    try:
+        # Newer PyQt6 versions
+        QApplication.setHighDpiScaleFactorRoundingPolicy(
+            Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+        )
+        # High DPI attributes are enabled by default in newer versions
+    except AttributeError:
+        # Fallback for older PyQt6 versions
+        try:
+            QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
+            QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
+        except AttributeError:
+            logger.warning("Could not set high DPI attributes - may be using newer PyQt6 version")
     
     # Log system information
     logger.info(f"Running as administrator: {is_admin()}")

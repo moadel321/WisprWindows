@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QSettings
 from PyQt6.QtGui import QFont
 
-from config.settings import AppSettings
+from src.config.settings import AppSettings
 from src.utils.constants import (
     DEFAULT_VAD_THRESHOLD,
     DEFAULT_VAD_WINDOW,
@@ -37,7 +37,19 @@ class SettingsDialog(QDialog):
         self.setWindowTitle("Settings")
         self.setMinimumWidth(500)
         self.setMinimumHeight(400)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        
+        # Use try/except to handle different PyQt6 versions and flag names
+        try:
+            # Try newer PyQt6 way first
+            from PyQt6.QtCore import Qt
+            self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
+        except AttributeError:
+            try:
+                # Fall back to older PyQt6 versions
+                self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+            except AttributeError:
+                # If all else fails, don't modify the flags
+                self.logger.warning("Could not modify window flags - context help button may be visible")
         
         # Initialize UI
         self._init_ui()
@@ -278,10 +290,38 @@ class SettingsDialog(QDialog):
     def _load_settings(self):
         """Load settings into the UI components"""
         try:
+            # Check for local models
+            from src.models.faster_whisper_model import FasterWhisperModel
+            model_dir = self.settings.get("model.directory")
+            local_models = FasterWhisperModel.find_available_models(model_dir)
+            
+            # Update model name dropdown based on available models
+            self.model_name_combo.clear()
+            
+            # First add locally found models
+            if local_models:
+                for model_name in local_models.keys():
+                    self.model_name_combo.addItem(model_name)
+            
+            # Then add standard model sizes as fallback options
+            standard_models = [
+                "tiny", "tiny.en",
+                "base", "base.en",
+                "small", "small.en", 
+                "medium", "medium.en",
+                "large-v1", "large-v2", "large-v3",
+                "distil-large-v3"
+            ]
+            
+            for model in standard_models:
+                if model not in local_models:
+                    self.model_name_combo.addItem(model)
+            
+            # Load other settings
             if not self.settings.exists():
                 # Load default values
                 self.model_dir_edit.setText(self.settings.get("model.directory"))
-                self.model_name_combo.setCurrentText("large-v3")
+                self.model_name_combo.setCurrentText("distil-large-v3")
                 self.compute_type_combo.setCurrentText("auto")
                 self.timeout_spin.setValue(DEFAULT_WHISPER_TIMEOUT)
                 self.save_history_check.setChecked(True)
@@ -297,7 +337,7 @@ class SettingsDialog(QDialog):
             else:
                 # General settings
                 self.model_dir_edit.setText(self.settings.get("model.directory"))
-                self.model_name_combo.setCurrentText(self.settings.get("model.name", "large-v3"))
+                self.model_name_combo.setCurrentText(self.settings.get("model.name", "distil-large-v3"))
                 self.compute_type_combo.setCurrentText(self.settings.get("model.compute_type", "auto"))
                 self.timeout_spin.setValue(self.settings.get("model.timeout", DEFAULT_WHISPER_TIMEOUT))
                 self.save_history_check.setChecked(self.settings.get("ui.save_history", True))

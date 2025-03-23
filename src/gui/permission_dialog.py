@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon, QFont
 
-from audio.windows_permission import (
+from src.audio.windows_permission import (
     check_microphone_permission,
     request_microphone_permission,
     ensure_microphone_permission
@@ -30,7 +30,19 @@ class PermissionDialog(QDialog):
         # Set window properties
         self.setWindowTitle("Microphone Permission Required")
         self.setMinimumWidth(500)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        
+        # Use try/except to handle different PyQt6 versions and flag names
+        try:
+            # Try newer PyQt6 way first
+            from PyQt6.QtCore import Qt
+            self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
+        except AttributeError:
+            try:
+                # Fall back to older PyQt6 versions
+                self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+            except AttributeError:
+                # If all else fails, don't modify the flags
+                self.logger.warning("Could not modify window flags - context help button may be visible")
         
         # Initialize UI
         self._init_ui()

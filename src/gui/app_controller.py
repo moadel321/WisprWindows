@@ -15,13 +15,13 @@ from datetime import datetime
 import numpy as np
 import torch
 
-from config.settings import AppSettings
-from audio.microphone import MicrophoneManager
-from audio.audio_processor import AudioProcessor
-from audio.vad_processor import VADProcessor
-from models.vad_model import SileroVAD
-from models.faster_whisper_model import FasterWhisperModel
-from text_insertion.text_inserter import TextInserter
+from src.config.settings import AppSettings
+from src.audio.microphone import MicrophoneManager
+from src.audio.audio_processor import AudioProcessor
+from src.audio.vad_processor import VADProcessor
+from src.models.vad_model import SileroVAD
+from src.models.faster_whisper_model import FasterWhisperModel
+from src.text_insertion.text_inserter import TextInserter
 
 
 class AppController:

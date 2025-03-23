@@ -60,8 +60,9 @@ class AppSettings:
         """Create default settings"""
         self.settings = {
             "model": {
-                "directory": str(Path.home() / "WhisperModels"),
-                "name": "whisper-large-v3",
+                "directory": str(Path.home() / "whisper-models"),
+                "name": "distil-large-v3",
+                "compute_type": "auto",
             },
             "audio": {
                 "microphone_id": None,
@@ -73,7 +74,7 @@ class AppSettings:
                 "sensitivity": 0.5,
             },
             "ui": {
-                "theme": "system",
+                "theme": "dark",
                 "save_history": True,
                 "max_history_entries": 100,
             }
@@ -119,4 +120,8 @@ class AppSettings:
             return True
         except Exception as e:
             self.logger.error(f"Failed to save settings: {str(e)}")
-            return False 
+            return False
+            
+    def exists(self) -> bool:
+        """Check if settings file exists"""
+        return self.config_file.exists() 

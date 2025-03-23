@@ -76,13 +76,22 @@ class MicrophoneManager:
             List[Dict[str, Any]]: List of microphone information
         """
         self.available_mics = []
+        unique_mic_names = set()  # Track unique microphone names
         
         try:
             # Get number of available input devices
             device_count = self.audio.get_device_count()
             self.logger.debug(f"Found {device_count} audio devices")
             
-            # Loop through all available devices
+            # Get default device info
+            try:
+                default_device = self.audio.get_default_input_device_info()
+                default_id = default_device['index']
+            except:
+                default_id = -1  # No default device found
+            
+            # First pass - collect all input devices
+            all_mics = []
             for i in range(device_count):
                 device_info = self.audio.get_device_info_by_index(i)
                 
@@ -93,23 +102,46 @@ class MicrophoneManager:
                         "name": device_info['name'],
                         "channels": device_info['maxInputChannels'],
                         "default_sample_rate": device_info['defaultSampleRate'],
-                        "is_default": self.audio.get_default_input_device_info()['index'] == device_info['index']
+                        "is_default": default_id == device_info['index']
                     }
-                    self.available_mics.append(mic_info)
-                    self.logger.debug(f"Found microphone: {mic_info['name']} (ID: {mic_info['id']})")
+                    all_mics.append(mic_info)
+            
+            # Sort by default status (default first) and then by name
+            all_mics.sort(key=lambda x: (not x["is_default"], x["name"]))
+            
+            # Second pass - filter out duplicates with similar names
+            for mic in all_mics:
+                # Clean the name for comparison (remove parentheses and numbers that often cause duplicates)
+                clean_name = ''.join([c for c in mic["name"] if not c.isdigit() and c not in '()[]{}'])
+                clean_name = clean_name.strip().lower()
+                
+                # If we haven't seen this microphone before, add it
+                if clean_name not in unique_mic_names:
+                    unique_mic_names.add(clean_name)
+                    self.available_mics.append(mic)
+                    self.logger.debug(f"Added microphone: {mic['name']} (ID: {mic['id']})")
             
             # If no microphones found, add a placeholder for the default
             if not self.available_mics:
-                default_id = self.audio.get_default_input_device_info()['index']
-                default_info = self.audio.get_device_info_by_index(default_id)
-                self.available_mics.append({
-                    "id": default_id,
-                    "name": f"Default ({default_info['name']})",
-                    "channels": default_info['maxInputChannels'],
-                    "default_sample_rate": default_info['defaultSampleRate'],
-                    "is_default": True
-                })
-                self.logger.debug(f"Using default microphone: {default_info['name']} (ID: {default_id})")
+                if default_id >= 0:
+                    default_info = self.audio.get_device_info_by_index(default_id)
+                    self.available_mics.append({
+                        "id": default_id,
+                        "name": f"Default ({default_info['name']})",
+                        "channels": default_info['maxInputChannels'],
+                        "default_sample_rate": default_info['defaultSampleRate'],
+                        "is_default": True
+                    })
+                    self.logger.debug(f"Using default microphone: {default_info['name']} (ID: {default_id})")
+                else:
+                    # Fallback if no default device
+                    self.available_mics.append({
+                        "id": 0,
+                        "name": "Default Microphone",
+                        "channels": 1,
+                        "default_sample_rate": DEFAULT_SAMPLE_RATE,
+                        "is_default": True
+                    })
         
         except Exception as e:
             self.logger.error(f"Error enumerating microphones: {str(e)}")

@@ -15,14 +15,14 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QFont
 
-from models.whisper_model import WhisperModel
-from config.settings import AppSettings
+from src.models.faster_whisper_model import FasterWhisperModel
+from src.config.settings import AppSettings
 
 
 class ModelInfoDialog(QDialog):
     """Dialog to display model information and status"""
     
-    def __init__(self, whisper_model: WhisperModel, settings: AppSettings, parent=None):
+    def __init__(self, whisper_model: FasterWhisperModel, settings: AppSettings, parent=None):
         super().__init__(parent)
         self.logger = logging.getLogger(__name__)
         self.model = whisper_model
@@ -32,7 +32,19 @@ class ModelInfoDialog(QDialog):
         self.setWindowTitle("Model Information")
         self.setMinimumWidth(600)
         self.setMinimumHeight(400)
-        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+        
+        # Use try/except to handle different PyQt6 versions and flag names
+        try:
+            # Try newer PyQt6 way first
+            from PyQt6.QtCore import Qt
+            self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowContextHelpButtonHint)
+        except AttributeError:
+            try:
+                # Fall back to older PyQt6 versions
+                self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+            except AttributeError:
+                # If all else fails, don't modify the flags
+                self.logger.warning("Could not modify window flags - context help button may be visible")
         
         # Initialize UI
         self._init_ui()
@@ -219,7 +231,7 @@ class ModelInfoDialog(QDialog):
             self.dir_label.setText(dir_path)
             
             # Ask if user wants to reload model
-            if self.model.is_ready:
+            if self.model.model is not None:
                 result = QMessageBox.question(
                     self,
                     "Reload Model",
@@ -244,7 +256,9 @@ class ModelInfoDialog(QDialog):
             self.model.model_dir = self.settings.get("model.directory")
             
             # Load the model
-            success = self.model.load_model()
+            result = self.model.load_model()
+            success = result.get("success", False) if isinstance(result, dict) else result
+            error = result.get("error", "") if isinstance(result, dict) else ""
             
             if success:
                 QMessageBox.information(
@@ -256,7 +270,7 @@ class ModelInfoDialog(QDialog):
                 QMessageBox.warning(
                     self,
                     "Model Load Failed",
-                    f"Failed to load Whisper model: {self.model.error_message}"
+                    f"Failed to load Whisper model: {error}"
                 )
                 
         except Exception as e:
@@ -288,7 +302,7 @@ class ModelInfoDialog(QDialog):
     
     def _on_test_model(self):
         """Handle test model button click"""
-        if not self.model.is_ready:
+        if self.model.model is None:
             QMessageBox.warning(
                 self,
                 "Model Not Loaded",

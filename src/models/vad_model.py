@@ -81,10 +81,9 @@ class SileroVAD:
         start_time = time.time()
         
         try:
-            # Check for CUDA availability
-            use_cuda = torch.cuda.is_available()
-            device = torch.device('cuda' if use_cuda else 'cpu')
-            self.logger.info(f"Loading Silero VAD model on {device}")
+            # FORCE CPU mode due to CUDA compatibility issues
+            self.device = torch.device('cpu')
+            self.logger.warning("Forcing CPU mode for Silero VAD due to CUDA compatibility issues")
             
             # Load the model from PyTorch Hub
             model, utils = torch.hub.load(
@@ -96,7 +95,7 @@ class SileroVAD:
             )
             
             # Move model to the appropriate device
-            self.model = model.to(device)
+            self.model = model.to(self.device)
             self.utils = utils
             
             # Get utility functions
@@ -187,7 +186,7 @@ class SileroVAD:
                 audio_tensor = torch.cat([audio_tensor, padding])
             
             # Move to the same device as the model
-            audio_tensor = audio_tensor.to(self.model.device)
+            audio_tensor = audio_tensor.to(self.device)
             
             # Get speech timestamps
             speech_timestamps = self.get_speech_timestamps(
@@ -266,7 +265,7 @@ class SileroVAD:
                 audio_tensor = audio_tensor / audio_tensor.abs().max()
             
             # Move to the same device as the model
-            audio_tensor = audio_tensor.to(self.model.device)
+            audio_tensor = audio_tensor.to(self.device)
             
             # Get speech timestamps
             speech_timestamps = self.get_speech_timestamps(
