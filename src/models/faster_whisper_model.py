@@ -247,13 +247,28 @@ class FasterWhisperModel:
         Returns:
             Dict[str, Any]: Result with transcription and metadata
         """
+        # Extract trace ID from filename if present
+        trace_id = "whisper"
+        if "_ptt_" in audio_file:
+            trace_id = f"ptt_{os.path.basename(audio_file).split('_ptt_')[1].split('.')[0]}"
+        elif "speech_" in audio_file:
+            trace_id = f"speech_{os.path.basename(audio_file).split('speech_')[1].split('.')[0]}"
+            
+        self.logger.info(f"[TRACE:{trace_id}] Starting Whisper transcription")
+            
         if self.model is None:
+            self.logger.info(f"[TRACE:{trace_id}] Model not loaded, attempting to load")
+            load_start = time.time()
             load_result = self.load_model()
+            self.logger.info(f"[TRACE:{trace_id}] Model load attempt took {time.time() - load_start:.3f}s")
+            
             if not load_result["success"]:
+                self.logger.error(f"[TRACE:{trace_id}] Failed to load model: {load_result['error']}")
                 return {"success": False, "error": load_result["error"]}
         
         try:
-            self.logger.info(f"Transcribing audio file: {audio_file}")
+            audio_size_kb = os.path.getsize(audio_file) / 1024
+            self.logger.info(f"[TRACE:{trace_id}] Transcribing audio file: {audio_file} ({audio_size_kb:.1f} KB)")
             start_time = time.time()
             
             # Set language or default
@@ -262,7 +277,13 @@ class FasterWhisperModel:
             # Configure VAD parameters if needed
             vad_params = vad_parameters if vad_parameters else {}
             
+            # Detailed timing for model phases
+            model_prep_start = time.time()
+            self.logger.info(f"[TRACE:{trace_id}] Preparing model for transcription")
+            
             # Transcribe the audio
+            self.logger.info(f"[TRACE:{trace_id}] Starting model.transcribe at {time.time() - start_time:.3f}s")
+            transcribe_start = time.time()
             segments, info = self.model.transcribe(
                 audio_file,
                 language=lang,
@@ -280,8 +301,12 @@ class FasterWhisperModel:
                 vad_parameters=vad_params,
                 max_initial_timestamp=max_initial_timestamp
             )
+            model_time = time.time() - transcribe_start
+            self.logger.info(f"[TRACE:{trace_id}] model.transcribe completed in {model_time:.3f}s")
             
             # Convert generator to list
+            self.logger.info(f"[TRACE:{trace_id}] Processing segments")
+            segments_start = time.time()
             segments_list = list(segments)
             
             # Extract text and metadata
@@ -311,9 +336,18 @@ class FasterWhisperModel:
             
             # Concatenate all text parts
             full_text = " ".join(text_parts)
+            segments_time = time.time() - segments_start
+            self.logger.info(f"[TRACE:{trace_id}] Processed {len(segments_list)} segments in {segments_time:.3f}s")
             
             transcribe_time = time.time() - start_time
-            self.logger.info(f"Transcription completed in {transcribe_time:.2f} seconds")
+            text_length = len(full_text)
+            chars_per_sec = text_length / transcribe_time if transcribe_time > 0 else 0
+            self.logger.info(f"[TRACE:{trace_id}] Transcription completed in {transcribe_time:.3f}s, {text_length} chars ({chars_per_sec:.1f} chars/sec)")
+            
+            # Performance breakdown
+            self.logger.info(f"[TRACE:{trace_id}] Performance breakdown:")
+            self.logger.info(f"[TRACE:{trace_id}] - Core model time: {model_time:.3f}s ({model_time/transcribe_time*100:.1f}%)")
+            self.logger.info(f"[TRACE:{trace_id}] - Segment processing: {segments_time:.3f}s ({segments_time/transcribe_time*100:.1f}%)")
             
             # Return complete results
             return {
@@ -323,7 +357,8 @@ class FasterWhisperModel:
                 "language": info.language,
                 "language_probability": info.language_probability,
                 "duration": info.duration,
-                "processing_time": transcribe_time
+                "processing_time": transcribe_time,
+                "trace_id": trace_id
             }
             
         except Exception as e:

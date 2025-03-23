@@ -13,10 +13,12 @@ APP_AUTHOR = "STT Team"
 # Audio settings
 DEFAULT_SAMPLE_RATE = 16000  # Hz
 DEFAULT_CHANNELS = 1  # Mono
-DEFAULT_CHUNK_SIZE = 1024  # Samples per buffer
+DEFAULT_CHUNK_SIZE = 512  # Samples per buffer (reduced from 1024 for faster processing)
 DEFAULT_FORMAT = "int16"  # Audio format
 DEFAULT_TEMP_DIR = "temp_audio"  # Temporary audio storage
 DEFAULT_WAVE_EXTENSION = ".wav"  # File extension for wave files
+DEFAULT_PUSH_TO_TALK = False  # Whether to use push-to-talk mode
+DEFAULT_PTT_HOTKEY = "Ctrl+Alt+T"  # Default push-to-talk hotkey
 
 # Audio processing
 DEFAULT_NORMALIZE = True  # Whether to normalize audio
@@ -24,9 +26,9 @@ DEFAULT_REMOVE_DC = True  # Whether to remove DC offset
 DEFAULT_CHUNK_DURATION_MS = 30  # Duration of audio chunks in ms
 
 # VAD settings
-DEFAULT_VAD_THRESHOLD = 0.5  # Default VAD sensitivity
-DEFAULT_VAD_WINDOW = 30  # Window size in ms
-DEFAULT_VAD_SPEECH_PAD_MS = 300  # Padding for speech detection in ms
+DEFAULT_VAD_THRESHOLD = 0.45  # Default VAD sensitivity (reduced from 0.5 for faster detection)
+DEFAULT_VAD_WINDOW = 20  # Window size in ms (reduced from 30 for faster processing)
+DEFAULT_VAD_SPEECH_PAD_MS = 150  # Padding for speech detection in ms (reduced from 300)
 
 # Whisper model settings
 DEFAULT_MODEL_NAME = "openai/whisper-large-v3"

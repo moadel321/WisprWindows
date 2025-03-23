@@ -4,7 +4,11 @@ A Windows desktop application that enhances productivity by converting spoken wo
 
 ## Features
 
-- Real-time speech-to-text transcription with up to 4x faster processing
+- Real-time speech-to-text transcription with up to 4x faster processing than normal whisper
+- Two input modes:
+  - **Continuous Mode**: Automatically detects speech using VAD
+  - **Push-to-Talk Mode**: Press and hold to record speech, release to transcribe (using Ctrl+Alt+T or dedicated button)
+- Ultra-responsive speech detection with minimal latency
 - Local processing with no data leaving the device
 - Voice activity detection to filter out non-speech sounds
 - Precise insertion of transcribed text into the focused text box
@@ -13,6 +17,7 @@ A Windows desktop application that enhances productivity by converting spoken wo
 - Modern, intuitive graphical user interface
 - Support for multiple Whisper model sizes (tiny to large-v3)
 - Optimized GPU inference with 8-bit quantization support
+- Detailed performance tracing for timing optimization
 
 ## System Requirements
 
@@ -24,6 +29,7 @@ A Windows desktop application that enhances productivity by converting spoken wo
   - Microphone: Any working microphone (built-in or external)
 - **Software:**
   - Python 3.9+ with pip
+  - CUDA 12.1
 
 ## Installation
 
@@ -98,15 +104,29 @@ A Windows desktop application that enhances productivity by converting spoken wo
      - `float16`: If you've enabled GPU acceleration (see Optional GPU Setup)
      - `int8_float16`: If you've enabled GPU with limited VRAM
 
-3. **Select your microphone** from the dropdown menu.
+3. **Select your input mode:**
+   - Go to **Transcription > Transcription Mode** in the menu
+   - Choose between:
+     - **Continuous Mode**: Automatically detects when you speak (default)
+     - **Push-to-Talk Mode**: Only records when you hold down the hotkey
 
-4. **Click "Start Transcription"** to begin listening.
+4. **Select your microphone** from the dropdown menu.
 
-5. **Focus on the text field** where you want the transcribed text to appear.
+5. **Click "Start Listening"** to begin.
 
-6. **Speak clearly** into your microphone. The application will detect your speech, transcribe it, and insert the text into the focused field.
+6. **Focus on the text field** where you want the transcribed text to appear.
 
-7. **Click "Stop"** when you're finished.
+7. **Using Continuous Mode:**
+   - Simply speak naturally
+   - Pause briefly between sentences
+   - The application will automatically detect speech, transcribe it, and insert text
+
+8. **Using Push-to-Talk Mode:**
+   - Press and hold **Ctrl+Alt+T** or the **Push to Talk** button while speaking
+   - Release when done speaking to trigger transcription
+   - Text will be inserted almost immediately
+
+9. **Click "Stop"** when you're finished with all transcription.
 
 ## Command-line Arguments
 
@@ -135,6 +155,17 @@ python tests/test_faster_whisper.py --model-path ~/whisper-models/distil-large-v
 ## Troubleshooting
 
 ### Performance Optimization
+
+- **Input Mode Selection**:
+  - Use **Push-to-Talk mode** for maximum responsiveness and control
+  - Use **Continuous mode** for hands-free operation with slightly higher latency
+  - Adjust VAD sensitivity in settings to find the optimal balance for your voice
+
+- **Reduce Latency**:
+  - Run in debug mode (`--debug`) to see detailed performance traces
+  - Place your cursor in the target field before speaking
+  - Speak clearly with natural pauses between sentences
+  - For best experience, use a high-quality microphone in a quiet environment
 
 - **CPU Mode** (Default):
   - Use smaller model sizes for faster processing (small or medium)

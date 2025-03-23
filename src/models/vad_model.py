@@ -137,13 +137,14 @@ class SileroVAD:
             return self.load_model()
         return True
     
-    def is_speech(self, audio_data: np.ndarray, sample_rate: Optional[int] = None) -> bool:
+    def is_speech(self, audio_data: np.ndarray, sample_rate: Optional[int] = None, threshold_override: Optional[float] = None) -> bool:
         """
         Detect whether the audio contains speech
         
         Args:
             audio_data: Audio data to analyze
             sample_rate: Sample rate of the audio data (default: use instance default)
+            threshold_override: Override the sensitivity threshold (used for faster response)
             
         Returns:
             bool: True if speech is detected, False otherwise
@@ -159,6 +160,9 @@ class SileroVAD:
         # Use instance sample rate if not specified
         if sample_rate is None:
             sample_rate = self.sample_rate
+            
+        # Use threshold override if provided
+        threshold = threshold_override if threshold_override is not None else self.sensitivity
         
         try:
             # Convert numpy array to PyTorch tensor
@@ -198,13 +202,15 @@ class SileroVAD:
             audio_tensor = audio_tensor.to(self.device)
             
             # Get speech timestamps
+            # Optimize sensitivity parameters for faster response
             speech_timestamps = self.get_speech_timestamps(
                 audio_tensor,
                 self.model,
-                threshold=self.sensitivity,
+                threshold=threshold,
                 sampling_rate=self.sample_rate,
-                min_speech_duration_ms=100,  # Minimum speech duration in ms
-                min_silence_duration_ms=100  # Minimum silence duration in ms
+                min_speech_duration_ms=50,   # Reduced from 100ms to 50ms for faster detection
+                min_silence_duration_ms=50,  # Reduced from 100ms to 50ms for faster transitions
+                return_seconds=False         # Return sample indices for faster processing
             )
             
             # Update processing metrics

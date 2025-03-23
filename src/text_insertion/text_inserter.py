@@ -216,12 +216,13 @@ class TextInserter:
             
         return element_info["editable"]
     
-    def insert_text(self, text: str) -> bool:
+    def insert_text(self, text: str, trace_id: str = None) -> bool:
         """
         Insert text into the focused element
         
         Args:
             text: Text to insert
+            trace_id: Optional trace ID for logging
             
         Returns:
             bool: Whether the text was successfully inserted
@@ -229,80 +230,132 @@ class TextInserter:
         if not text:
             self.logger.warning("Empty text provided for insertion")
             return False
+        
+        # Use provided trace ID or generate one
+        if not trace_id:
+            trace_id = f"insert_{int(time.time() * 1000)}"
+            
+        start_time = time.time()
+        self.logger.info(f"[TRACE:{trace_id}] Starting text insertion ({len(text)} chars)")
             
         try:
+            # Get focused element
+            element_check_start = time.time()
+            self.logger.info(f"[TRACE:{trace_id}] Getting focused element")
             element_info = self.get_focused_element()
             if not element_info:
-                self.logger.warning("No focused element found for text insertion")
+                self.logger.warning(f"[TRACE:{trace_id}] No focused element found for text insertion")
                 return False
                 
             if not element_info["editable"]:
-                self.logger.warning("Focused element is not editable")
+                self.logger.warning(f"[TRACE:{trace_id}] Focused element is not editable")
                 return False
                 
             element = element_info["element"]
             hwnd = element_info["hwnd"]
+            app_name = element_info["app"]
+            
+            element_check_time = time.time() - element_check_start
+            self.logger.info(f"[TRACE:{trace_id}] Found editable element in '{app_name}' in {element_check_time:.3f}s")
             
             # Method 1: Try to use the element's type_keys method
+            method1_start = time.time()
+            self.logger.info(f"[TRACE:{trace_id}] Attempting insertion method 1: type_keys")
             try:
                 element.type_keys(text, with_spaces=True, with_tabs=True, with_newlines=True)
-                self.logger.info(f"Text inserted using type_keys: {text[:20]}...")
+                method1_time = time.time() - method1_start
+                self.logger.info(f"[TRACE:{trace_id}] Text successfully inserted using type_keys in {method1_time:.3f}s")
                 return True
             except Exception as e:
-                self.logger.warning(f"Failed to insert text with type_keys: {str(e)}")
+                method1_time = time.time() - method1_start
+                self.logger.warning(f"[TRACE:{trace_id}] Failed to insert text with type_keys after {method1_time:.3f}s: {str(e)}")
                 
             # Method 2: Try to set_text directly if the element supports it
+            method2_start = time.time()
+            self.logger.info(f"[TRACE:{trace_id}] Attempting insertion method 2: set_text")
             try:
                 if hasattr(element, "set_text") and callable(getattr(element, "set_text", None)):
                     element.set_text(text)
-                    self.logger.info(f"Text inserted using set_text: {text[:20]}...")
+                    method2_time = time.time() - method2_start
+                    self.logger.info(f"[TRACE:{trace_id}] Text successfully inserted using set_text in {method2_time:.3f}s")
                     return True
+                else:
+                    self.logger.info(f"[TRACE:{trace_id}] Element does not support set_text method")
             except Exception as e:
-                self.logger.warning(f"Failed to insert text with set_text: {str(e)}")
+                method2_time = time.time() - method2_start
+                self.logger.warning(f"[TRACE:{trace_id}] Failed to insert text with set_text after {method2_time:.3f}s: {str(e)}")
                 
             # Method 3: Try clipboard approach
+            method3_start = time.time()
+            self.logger.info(f"[TRACE:{trace_id}] Attempting insertion method 3: clipboard")
             try:
                 # Initialize COM for clipboard operations on Windows
+                com_init_start = time.time()
                 try:
+                    # Make sure we properly import and initialize COM
                     import pythoncom
-                    pythoncom.CoInitialize()
+                    # Force COM initialization even if it's already initialized
+                    # This addresses the "CoInitialize has not been called" error
+                    try:
+                        pythoncom.CoUninitialize()  # Clean any previous state
+                    except:
+                        pass
+                    pythoncom.CoInitialize()  # Initialize fresh
                     com_initialized = True
+                    com_init_time = time.time() - com_init_start
+                    self.logger.info(f"[TRACE:{trace_id}] COM initialized in {com_init_time:.3f}s")
                 except (ImportError, Exception) as e:
-                    self.logger.warning(f"Could not initialize COM: {str(e)}")
+                    self.logger.warning(f"[TRACE:{trace_id}] Could not initialize COM: {str(e)}")
                     com_initialized = False
                 
                 # Remember original clipboard content
+                clipboard_start = time.time()
                 import win32clipboard
                 win32clipboard.OpenClipboard()
                 try:
                     original_clipboard = win32clipboard.GetClipboardData(win32clipboard.CF_UNICODETEXT)
+                    self.logger.info(f"[TRACE:{trace_id}] Original clipboard content saved")
                 except:
                     original_clipboard = None
+                    self.logger.info(f"[TRACE:{trace_id}] No original clipboard content to save")
                 win32clipboard.EmptyClipboard()
                 win32clipboard.SetClipboardText(text)
                 win32clipboard.CloseClipboard()
+                clipboard_time = time.time() - clipboard_start
+                self.logger.info(f"[TRACE:{trace_id}] Clipboard prepared in {clipboard_time:.3f}s")
                 
                 # Make sure the window is in the foreground
+                focus_start = time.time()
                 win32gui.SetForegroundWindow(hwnd)
                 time.sleep(0.1)  # Small delay to ensure window activation
+                focus_time = time.time() - focus_start
+                self.logger.info(f"[TRACE:{trace_id}] Window focused in {focus_time:.3f}s")
                 
                 # Send Ctrl+V to paste
+                paste_start = time.time()
                 pywinauto.keyboard.send_keys('^v')
-                time.sleep(0.2)  # Give time for paste to complete
+                time.sleep(0.1)  # Reduced from 0.2 to 0.1 to improve performance
+                paste_time = time.time() - paste_start
+                self.logger.info(f"[TRACE:{trace_id}] Paste command sent in {paste_time:.3f}s")
                 
                 # Restore original clipboard if there was one
+                restore_start = time.time()
                 if original_clipboard:
                     win32clipboard.OpenClipboard()
                     win32clipboard.EmptyClipboard()
                     win32clipboard.SetClipboardText(original_clipboard)
                     win32clipboard.CloseClipboard()
+                    self.logger.info(f"[TRACE:{trace_id}] Original clipboard content restored")
+                restore_time = time.time() - restore_start
                 
-                self.logger.info(f"Text inserted using clipboard: {text[:20]}...")
+                method3_time = time.time() - method3_start
+                self.logger.info(f"[TRACE:{trace_id}] Text inserted using clipboard in {method3_time:.3f}s")
                 
                 # Uninitialize COM if we initialized it
                 if com_initialized:
                     try:
                         pythoncom.CoUninitialize()
+                        self.logger.info(f"[TRACE:{trace_id}] COM uninitialized")
                     except Exception:
                         pass
                 
@@ -313,12 +366,16 @@ class TextInserter:
                     try:
                         import pythoncom
                         pythoncom.CoUninitialize()
+                        self.logger.info(f"[TRACE:{trace_id}] COM uninitialized after error")
                     except Exception:
                         pass
                 
-                self.logger.warning(f"Failed to insert text with clipboard: {str(e)}")
+                method3_time = time.time() - method3_start
+                self.logger.warning(f"[TRACE:{trace_id}] Failed to insert text with clipboard after {method3_time:.3f}s: {str(e)}")
                 
             # Method 4: Fallback to character-by-character keypress simulation
+            method4_start = time.time()
+            self.logger.info(f"[TRACE:{trace_id}] Attempting insertion method 4: character-by-character")
             try:
                 # Make sure the window is in the foreground
                 win32gui.SetForegroundWindow(hwnd)
@@ -334,12 +391,17 @@ class TextInserter:
                         pywinauto.keyboard.send_keys(char, with_spaces=True)
                     time.sleep(0.01)  # Small delay between keystrokes
                 
-                self.logger.info(f"Text inserted using character-by-character input: {text[:20]}...")
+                method4_time = time.time() - method4_start
+                self.logger.info(f"[TRACE:{trace_id}] Text inserted character-by-character in {method4_time:.3f}s")
                 return True
             except Exception as e:
-                self.logger.error(f"Failed to insert text with character-by-character input: {str(e)}")
-                
+                method4_time = time.time() - method4_start
+                self.logger.error(f"[TRACE:{trace_id}] Failed to insert text with character-by-character input after {method4_time:.3f}s: {str(e)}")
+            
+            total_time = time.time() - start_time
+            self.logger.error(f"[TRACE:{trace_id}] All text insertion methods failed after {total_time:.3f}s")
             return False
         except Exception as e:
-            self.logger.error(f"Error inserting text: {str(e)}")
+            total_time = time.time() - start_time
+            self.logger.error(f"[TRACE:{trace_id}] Error inserting text after {total_time:.3f}s: {str(e)}")
             return False 

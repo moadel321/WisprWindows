@@ -61,6 +61,11 @@ class AppController:
             audio_processor=self.audio_processor
         )
         
+        # Push to talk mode
+        self.push_to_talk_mode = settings.get("audio.push_to_talk", False)
+        self.push_to_talk_active = False
+        self.speech_buffer = []
+        
         # Set VAD callbacks
         self.vad_processor.set_callbacks(
             on_speech_start=self._on_speech_start,
@@ -96,6 +101,7 @@ class AppController:
         self.transcription_history: List[Dict[str, Any]] = []
         self.speech_detected = False
         self.temp_dir = tempfile.mkdtemp(prefix="stt_audio_")
+        self.continuous_mode = True  # Enable continuous transcription by default
         
         # Transcription pool and queue
         self.transcription_lock = threading.Lock()
@@ -212,8 +218,15 @@ class AppController:
             time_info: Timing information from PyAudio
         """
         try:
-            # Pass audio data to VAD processor
-            self.vad_processor.process_audio(audio_data, time_info)
+            # If in push-to-talk mode, capture audio directly when active
+            if self.push_to_talk_mode:
+                if self.push_to_talk_active:
+                    # Preprocess and store audio
+                    processed_audio = self.audio_processor.preprocess_audio(audio_data)
+                    self.speech_buffer.append(processed_audio)
+            else:
+                # Pass audio data to VAD processor for automatic detection
+                self.vad_processor.process_audio(audio_data, time_info)
             
         except Exception as e:
             self.logger.error(f"Error processing audio: {str(e)}")
@@ -237,22 +250,33 @@ class AppController:
         Args:
             segment: Speech segment information including audio data
         """
-        self.logger.debug(f"Speech ended, duration: {segment['duration']:.2f}s")
+        trace_id = segment.get('trace_id', f"speech_{int(time.time() * 1000)}")
+        self.logger.info(f"[TRACE:{trace_id}] Speech ended, duration: {segment['duration']:.2f}s")
         
         try:
+            # Mark the start time for performance tracking
+            save_start_time = time.time()
+            
             # Save the speech segment for processing
             timestamp = segment['timestamp'].replace(':', '-').replace(' ', '_')
             segment_file = os.path.join(self.temp_dir, f"speech_{timestamp}.wav")
             
             # Save to WAV for further processing
             self.audio_processor.save_audio_to_wave(segment['audio'], segment_file)
-            self.logger.debug(f"Speech segment saved to {segment_file}")
+            save_time = time.time() - save_start_time
+            self.logger.info(f"[TRACE:{trace_id}] Speech segment saved to {segment_file} in {save_time:.3f}s")
+            
+            # Enrich segment with trace information
+            segment['trace_id'] = trace_id
             
             # Process with Whisper model
+            process_start_time = time.time()
+            self.logger.info(f"[TRACE:{trace_id}] Starting transcription processing")
             self._process_speech_segment(segment_file, segment)
+            self.logger.info(f"[TRACE:{trace_id}] Transcription processing initiated after {time.time() - process_start_time:.3f}s")
                 
         except Exception as e:
-            self.logger.error(f"Error processing speech segment: {str(e)}")
+            self.logger.error(f"[TRACE:{trace_id}] Error processing speech segment: {str(e)}")
             if self.on_error_callback:
                 self.on_error_callback(f"Error processing speech: {str(e)}")
     
@@ -281,16 +305,24 @@ class AppController:
             audio_file: Path to the audio file
             segment_info: Information about the speech segment
         """
+        trace_id = segment_info.get('trace_id', f"trans_{int(time.time() * 1000)}")
+        worker_start_time = time.time()
+        self.logger.info(f"[TRACE:{trace_id}] Transcription worker started")
+        
         with self.transcription_lock:
+            self.logger.info(f"[TRACE:{trace_id}] Acquired transcription lock after {time.time() - worker_start_time:.3f}s")
             if self.is_processing_transcription:
-                self.logger.debug("Already processing a transcription, skipping")
+                self.logger.info(f"[TRACE:{trace_id}] Already processing a transcription, skipping")
                 return
                 
             self.is_processing_transcription = True
         
         try:
             # Make sure the model is loaded
+            model_check_start = time.time()
+            self.logger.info(f"[TRACE:{trace_id}] Checking if model is loaded")
             if not self.ensure_model_loaded():
+                self.logger.info(f"[TRACE:{trace_id}] Model not loaded, skipping transcription")
                 # Store placeholder text if model loading failed
                 transcription_text = f"(Model not loaded - Speech segment {segment_info['duration']:.1f}s)"
                 self.add_to_history(transcription_text)
@@ -301,47 +333,58 @@ class AppController:
                     
                 return
             
+            self.logger.info(f"[TRACE:{trace_id}] Model load check completed in {time.time() - model_check_start:.3f}s")
+            
             # Transcribe the audio
-            self.logger.info(f"Transcribing speech segment: {audio_file}")
+            transcribe_start = time.time()
+            self.logger.info(f"[TRACE:{trace_id}] Starting whisper transcription of audio file: {audio_file}")
             result = self.whisper_model.transcribe(audio_file)
+            transcribe_time = time.time() - transcribe_start
+            self.logger.info(f"[TRACE:{trace_id}] Whisper transcription completed in {transcribe_time:.3f}s")
             
             if result["success"]:
                 transcription_text = result["text"]
-                self.logger.info(f"Transcription result: {transcription_text}")
+                self.logger.info(f"[TRACE:{trace_id}] Transcription result ({len(transcription_text)} chars): {transcription_text}")
                 
                 # Add to history
                 self.add_to_history(transcription_text)
                 
                 # Insert text into focused application
+                insert_start = time.time()
+                self.logger.info(f"[TRACE:{trace_id}] Starting text insertion")
                 insert_success = False
                 try:
                     # Check if element is editable
                     if self.text_inserter.is_text_editable():
-                        # Insert the text
-                        insert_success = self.text_inserter.insert_text(transcription_text)
+                        # Insert the text - pass the trace_id to the inserter
+                        insert_success = self.text_inserter.insert_text(transcription_text, trace_id)
+                        insert_time = time.time() - insert_start
                         if insert_success:
-                            self.logger.info("Text successfully inserted into focused element")
+                            self.logger.info(f"[TRACE:{trace_id}] Text successfully inserted in {insert_time:.3f}s")
                         else:
-                            error_msg = "Failed to insert text into focused element"
-                            self.logger.warning(error_msg)
+                            error_msg = f"Failed to insert text into focused element after {insert_time:.3f}s"
+                            self.logger.warning(f"[TRACE:{trace_id}] {error_msg}")
                             if self.on_error_callback:
                                 self.on_error_callback(error_msg)
                     else:
+                        self.logger.warning(f"[TRACE:{trace_id}] Focused element is not editable")
                         error_msg = "Focused element is not editable"
-                        self.logger.warning(error_msg)
                         if self.on_error_callback:
                             self.on_error_callback(error_msg)
                 except Exception as e:
-                    self.logger.error(f"Error inserting text: {str(e)}")
+                    self.logger.error(f"[TRACE:{trace_id}] Error inserting text: {str(e)}")
                     if self.on_error_callback:
                         self.on_error_callback(f"Text insertion error: {str(e)}")
                 
                 # Notify UI
+                ui_notify_start = time.time()
                 if self.on_transcription_callback:
+                    self.logger.info(f"[TRACE:{trace_id}] Notifying UI of transcription result")
                     self.on_transcription_callback(transcription_text, insert_success)
+                    self.logger.info(f"[TRACE:{trace_id}] UI notification completed in {time.time() - ui_notify_start:.3f}s")
             else:
                 error_message = result["error"]
-                self.logger.error(f"Transcription failed: {error_message}")
+                self.logger.error(f"[TRACE:{trace_id}] Transcription failed: {error_message}")
                 
                 # Store error in history
                 transcription_text = f"(Transcription failed: {error_message})"
@@ -355,13 +398,15 @@ class AppController:
                     self.on_error_callback(f"Transcription failed: {error_message}")
                 
         except Exception as e:
-            self.logger.error(f"Error in transcription worker: {str(e)}")
+            self.logger.error(f"[TRACE:{trace_id}] Error in transcription worker: {str(e)}")
             if self.on_error_callback:
                 self.on_error_callback(f"Transcription error: {str(e)}")
                 
         finally:
+            total_time = time.time() - worker_start_time
             with self.transcription_lock:
                 self.is_processing_transcription = False
+            self.logger.info(f"[TRACE:{trace_id}] Transcription worker completed in {total_time:.3f}s")
     
     def _on_speech_detected(self, is_speech: bool) -> None:
         """
@@ -530,4 +575,107 @@ class AppController:
         Args:
             callback: Function to call with model status updates
         """
-        self.on_model_status_callback = callback 
+        self.on_model_status_callback = callback
+        
+    def set_push_to_talk_mode(self, enabled: bool) -> None:
+        """
+        Enable or disable push-to-talk mode
+        
+        Args:
+            enabled: Whether push-to-talk mode should be enabled
+        """
+        self.push_to_talk_mode = enabled
+        self.settings.set("audio.push_to_talk", enabled)
+        self.logger.info(f"Push-to-talk mode {'enabled' if enabled else 'disabled'}")
+        
+    def is_push_to_talk_mode(self) -> bool:
+        """
+        Check if push-to-talk mode is enabled
+        
+        Returns:
+            bool: Whether push-to-talk mode is enabled
+        """
+        return self.push_to_talk_mode
+        
+    def push_to_talk_start(self) -> None:
+        """
+        Start recording for push-to-talk mode
+        Called when the push-to-talk hotkey is pressed
+        """
+        if not self.is_transcribing or not self.push_to_talk_mode:
+            return
+            
+        self.logger.info("Push-to-talk activated")
+        self.push_to_talk_active = True
+        self.speech_buffer = []
+        
+        # Notify UI of speech detection
+        if self.on_speech_detected_callback:
+            self.on_speech_detected_callback(True)
+    
+    def push_to_talk_end(self) -> None:
+        """
+        End recording for push-to-talk mode and process speech
+        Called when the push-to-talk hotkey is released
+        """
+        if not self.is_transcribing or not self.push_to_talk_mode or not self.push_to_talk_active:
+            return
+            
+        ptt_end_time = time.time()
+        trace_id = f"ptt_{int(ptt_end_time * 1000)}"
+        self.logger.info(f"[TRACE:{trace_id}] Push-to-talk deactivated")
+        self.push_to_talk_active = False
+        
+        # Notify UI of speech end
+        if self.on_speech_detected_callback:
+            self.on_speech_detected_callback(False)
+        
+        # Process the collected speech
+        if self.speech_buffer:
+            try:
+                self.logger.info(f"[TRACE:{trace_id}] Processing push-to-talk speech, buffer size: {len(self.speech_buffer)}")
+                process_start_time = time.time()
+                
+                # Concatenate all audio chunks
+                concat_start = time.time()
+                speech_audio = np.concatenate(self.speech_buffer)
+                concat_time = time.time() - concat_start
+                self.logger.info(f"[TRACE:{trace_id}] Concatenated audio buffer in {concat_time:.3f}s")
+                
+                # Create segment info
+                duration = len(speech_audio) / self.audio_processor.sample_rate
+                segment = {
+                    "audio": speech_audio,
+                    "start_time": ptt_end_time - duration,
+                    "end_time": ptt_end_time,
+                    "duration": duration,
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "trace_id": trace_id
+                }
+                
+                self.logger.info(f"[TRACE:{trace_id}] Push-to-talk speech duration: {duration:.2f}s")
+                
+                # Save WAV file
+                save_start = time.time()
+                timestamp = segment['timestamp'].replace(':', '-').replace(' ', '_')
+                segment_file = os.path.join(self.temp_dir, f"speech_ptt_{timestamp}.wav")
+                self.audio_processor.save_audio_to_wave(segment['audio'], segment_file)
+                save_time = time.time() - save_start
+                self.logger.info(f"[TRACE:{trace_id}] Saved audio to WAV in {save_time:.3f}s: {segment_file}")
+                
+                # Process with Whisper model
+                self.logger.info(f"[TRACE:{trace_id}] Starting speech segment processing")
+                self._process_speech_segment(segment_file, segment)
+                
+                total_prep_time = time.time() - process_start_time
+                self.logger.info(f"[TRACE:{trace_id}] Total push-to-talk preparation time: {total_prep_time:.3f}s")
+                
+            except Exception as e:
+                self.logger.error(f"[TRACE:{trace_id}] Error processing push-to-talk speech: {str(e)}")
+                if self.on_error_callback:
+                    self.on_error_callback(f"Error processing push-to-talk speech: {str(e)}")
+        else:
+            self.logger.warning(f"[TRACE:{trace_id}] No speech data collected during push-to-talk")
+        
+        # Clear buffer
+        self.speech_buffer = [] 

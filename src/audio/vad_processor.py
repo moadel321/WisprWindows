@@ -66,8 +66,8 @@ class VADProcessor:
         self.current_speech_buffer = []
         self.speech_segments = []
         
-        # Processing buffers
-        self.audio_buffer = deque(maxlen=int(sample_rate * 5))  # 5 seconds buffer
+        # Processing buffers - reduce buffer size for faster response
+        self.audio_buffer = deque(maxlen=int(sample_rate * 0.75))  # 0.75 seconds buffer (reduced from 5s)
         self.window_size_samples = int(sample_rate * window_size_ms / 1000)
         
         # Processing thread and queue
@@ -216,23 +216,58 @@ class VADProcessor:
         start_time = time.time()
         
         try:
-            # Extend the buffer with new audio data
+            # Start tracing for performance logging
+            frame_id = int(time.time() * 1000)
+            self.logger.debug(f"[FRAME:{frame_id}] Processing audio frame")
+            buffer_start = time.time()
+            
+            # Use a smaller buffer for more immediate activation
+            # Only keep the most recent data needed for analysis (reduces lag)
+            max_buffer_size = int(self.sample_rate * 0.5)  # 0.5 seconds of audio
+            
+            # Add new data to buffer
             self.audio_buffer.extend(audio_data)
             
+            # Trim buffer if it's gotten too large
+            if len(self.audio_buffer) > max_buffer_size:
+                excess = len(self.audio_buffer) - max_buffer_size
+                for _ in range(excess):
+                    self.audio_buffer.popleft()
+                    
+            buffer_time = time.time() - buffer_start
+            
             # Convert buffer to numpy array for processing
+            vad_start = time.time()
             buffer_array = np.array(list(self.audio_buffer))
             
-            # Check for speech
-            is_speech = self.vad_model.is_speech(buffer_array)
+            # Check for speech - use more aggressive threshold for faster activation
+            # Increase sensitivity to speech by 10% to detect speech faster
+            adjusted_threshold = max(0.1, self.vad_threshold * 0.9)  # Lower threshold = higher sensitivity
+            is_speech = self.vad_model.is_speech(buffer_array, threshold_override=adjusted_threshold)
+            vad_time = time.time() - vad_start
             
+            self.logger.debug(f"[FRAME:{frame_id}] VAD check: is_speech={is_speech}, buffer_time={buffer_time:.4f}s, vad_time={vad_time:.4f}s")
+            
+            # Track consecutive non-speech frames for better end detection
+            if not hasattr(self, 'consecutive_silence_frames'):
+                self.consecutive_silence_frames = 0
+                
             # Process state changes
-            if is_speech and not self.is_speech_active:
-                self._handle_speech_start(time_info)
-            elif not is_speech and self.is_speech_active:
-                # Only end speech after a silence threshold to avoid choppy detection
-                silence_duration = time.time() - (self.speech_start_time or 0)
-                if silence_duration > 0.5:  # 500ms silence threshold
+            if is_speech:
+                self.consecutive_silence_frames = 0
+                if not self.is_speech_active:
+                    self.logger.debug(f"[FRAME:{frame_id}] Speech starting")
+                    self._handle_speech_start(time_info)
+            else:
+                # Increment silence counter
+                self.consecutive_silence_frames += 1
+                
+                # End speech after a very short period of silence (reduced from 8 to 4 frames)
+                # ~0.2 seconds of silence (varies based on processing speed)
+                if self.is_speech_active and self.consecutive_silence_frames >= 4:
+                    self.logger.debug(f"[FRAME:{frame_id}] Speech ending after {self.consecutive_silence_frames} silence frames")
                     self._handle_speech_end()
+                    self.consecutive_silence_frames = 0
             
             # If speech is active, add to current speech buffer
             if self.is_speech_active:
@@ -287,11 +322,15 @@ class VADProcessor:
         speech_end_time = time.time()
         speech_duration = speech_end_time - (self.speech_start_time or 0)
         
-        self.logger.debug(f"Speech end detected, duration: {speech_duration:.2f}s")
+        trace_id = f"speech_{int(speech_end_time * 1000)}"
+        self.logger.info(f"[TRACE:{trace_id}] Speech end detected, duration: {speech_duration:.2f}s")
         
         # Concatenate speech buffer
         if self.current_speech_buffer:
             try:
+                processing_start = time.time()
+                self.logger.info(f"[TRACE:{trace_id}] Starting speech buffer processing")
+                
                 speech_audio = np.concatenate(self.current_speech_buffer)
                 
                 # Create segment info
@@ -300,21 +339,29 @@ class VADProcessor:
                     "start_time": self.speech_start_time,
                     "end_time": speech_end_time,
                     "duration": speech_duration,
-                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "trace_id": trace_id
                 }
                 
                 # Add to segments list
                 self.speech_segments.append(segment)
                 
+                processing_time = time.time() - processing_start
+                self.logger.info(f"[TRACE:{trace_id}] Speech buffer processing completed in {processing_time:.3f}s")
+                
                 # Call callback if registered
                 if self.on_speech_end_callback:
                     try:
+                        callback_start = time.time()
+                        self.logger.info(f"[TRACE:{trace_id}] Calling speech end callback")
                         self.on_speech_end_callback(segment)
+                        callback_time = time.time() - callback_start
+                        self.logger.info(f"[TRACE:{trace_id}] Speech end callback completed in {callback_time:.3f}s")
                     except Exception as e:
-                        self.logger.error(f"Error in speech end callback: {str(e)}")
+                        self.logger.error(f"[TRACE:{trace_id}] Error in speech end callback: {str(e)}")
                 
             except Exception as e:
-                self.logger.error(f"Error processing speech segment: {str(e)}")
+                self.logger.error(f"[TRACE:{trace_id}] Error processing speech segment: {str(e)}")
         
         self.last_speech_end_time = speech_end_time
         self.current_speech_buffer = []
@@ -324,7 +371,7 @@ class VADProcessor:
             try:
                 self.on_speech_detected_callback(False)
             except Exception as e:
-                self.logger.error(f"Error in speech detection callback: {str(e)}")
+                self.logger.error(f"[TRACE:{trace_id}] Error in speech detection callback: {str(e)}")
     
     def get_speech_segments(self) -> List[Dict]:
         """

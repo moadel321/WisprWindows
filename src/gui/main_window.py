@@ -53,6 +53,25 @@ class MainWindow(QMainWindow):
         self.error_signal.connect(self._update_error_log)
         self.model_status_signal.connect(self._update_model_status)
         
+        # Setup push-to-talk state
+        self.ptt_active = False
+        
+        # Setup keyboard shortcuts with more robust methods
+        from PyQt6.QtGui import QKeySequence, QShortcut
+        self.ptt_shortcut = QShortcut(QKeySequence("Ctrl+Alt+T"), self)
+        self.ptt_shortcut.activated.connect(self._on_ptt_key_pressed)
+        self.ptt_shortcut.activatedAmbiguously.connect(self._on_ptt_key_pressed)
+        
+        # Additional shortcut for Alt+T (works better on some systems)
+        self.alt_t_shortcut = QShortcut(QKeySequence("Alt+T"), self)
+        self.alt_t_shortcut.activated.connect(self._on_ptt_key_pressed)
+        
+        # Make sure window has focus to receive keyboard events
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        
+        # Install event filter for key release detection
+        self.installEventFilter(self)
+        
         # Setup window properties
         self.setWindowTitle("Speech-to-Text Tool")
         self.setMinimumSize(800, 600)
@@ -210,19 +229,33 @@ class MainWindow(QMainWindow):
         controls_layout.addSpacing(20)
         
         # Start/stop buttons
-        self.start_button = QPushButton("Start Transcription")
+        self.start_button = QPushButton("Start Listening")
         self.start_button.setIcon(QIcon.fromTheme("media-record"))
         self.start_button.setMinimumWidth(150)
         self.start_button.clicked.connect(self._on_start_clicked)
+        self.start_button.setToolTip("Start continuous listening - speech segments will be automatically transcribed")
         
         self.stop_button = QPushButton("Stop")
         self.stop_button.setIcon(QIcon.fromTheme("media-playback-stop"))
         self.stop_button.setMinimumWidth(100)
         self.stop_button.clicked.connect(self._on_stop_clicked)
         self.stop_button.setEnabled(False)
+        self.stop_button.setToolTip("Stop listening completely")
         
+        # Push-to-talk button as an alternative to keyboard shortcut
+        self.ptt_button = QPushButton("Push to Talk")
+        self.ptt_button.setStyleSheet("QPushButton:pressed { background-color: #4CAF50; }")
+        self.ptt_button.setMinimumWidth(130)
+        self.ptt_button.setEnabled(False)  # Initially disabled
+        self.ptt_button.setToolTip("Press and hold to record speech, release to transcribe")
+        # Connect mouse events
+        self.ptt_button.pressed.connect(self._on_ptt_button_pressed)
+        self.ptt_button.released.connect(self._on_ptt_button_released)
+        
+        # Add all buttons
         controls_layout.addWidget(self.start_button)
         controls_layout.addWidget(self.stop_button)
+        controls_layout.addWidget(self.ptt_button)
         
         # Add to top bar
         top_bar.addWidget(controls_group)
@@ -257,6 +290,19 @@ class MainWindow(QMainWindow):
         
         # Add status group to top bar
         top_bar.addWidget(status_group)
+        
+        # Add instruction labels
+        self.continuous_instruction_label = QLabel("🎤 CONTINUOUS MODE: Click 'Start Listening', speak naturally, and pause between sentences. Speech will be transcribed automatically after each pause.")
+        self.continuous_instruction_label.setStyleSheet("color: #4CAF50; padding: 5px; background-color: #2A2A2A; border-radius: 3px;")
+        self.continuous_instruction_label.setWordWrap(True)
+        main_layout.addWidget(self.continuous_instruction_label)
+        
+        # Create instruction label for push-to-talk mode (initially hidden)
+        self.ptt_instruction_label = QLabel("🎤 PUSH-TO-TALK MODE: Press and hold Ctrl+Alt+T while speaking, then release to transcribe. Focus your cursor where you want the text inserted.")
+        self.ptt_instruction_label.setStyleSheet("color: #4CAF50; padding: 5px; background-color: #2A2A2A; border-radius: 3px;")
+        self.ptt_instruction_label.setWordWrap(True)
+        self.ptt_instruction_label.setVisible(False)
+        main_layout.addWidget(self.ptt_instruction_label)
         
         # Add to main layout
         main_layout.addLayout(top_bar)
@@ -396,16 +442,36 @@ class MainWindow(QMainWindow):
         menu_bar.addMenu(transcription_menu)
         
         # Start transcription action
-        start_action = QAction("Start Transcription", self)
+        start_action = QAction("Start Listening", self)
         start_action.triggered.connect(self._on_start_clicked)
         start_action.setShortcut("F5")
         transcription_menu.addAction(start_action)
         
         # Stop transcription action
-        stop_action = QAction("Stop Transcription", self)
+        stop_action = QAction("Stop Listening", self)
         stop_action.triggered.connect(self._on_stop_clicked)
         stop_action.setShortcut("F6")
         transcription_menu.addAction(stop_action)
+        
+        transcription_menu.addSeparator()
+        
+        # Mode submenu
+        mode_menu = QMenu("Transcription Mode", self)
+        transcription_menu.addMenu(mode_menu)
+        
+        # Continuous mode action
+        self.continuous_mode_action = QAction("Continuous Mode (VAD)", self)
+        self.continuous_mode_action.setCheckable(True)
+        self.continuous_mode_action.setChecked(True)
+        self.continuous_mode_action.triggered.connect(self._on_continuous_mode_clicked)
+        mode_menu.addAction(self.continuous_mode_action)
+        
+        # Push to talk mode action
+        self.ptt_mode_action = QAction("Push to Talk (Ctrl+Alt+T)", self)
+        self.ptt_mode_action.setCheckable(True)
+        self.ptt_mode_action.setChecked(False)
+        self.ptt_mode_action.triggered.connect(self._on_ptt_mode_clicked)
+        mode_menu.addAction(self.ptt_mode_action)
         
         # Model menu
         model_menu = QMenu("Model", self)
@@ -490,7 +556,7 @@ class MainWindow(QMainWindow):
                 "Microphone access is required for this application to function.\n\n"
                 "The application will continue to run, but transcription will not work "
                 "until microphone access is granted.\n\n"
-                "You can grant permission later by clicking 'Start Transcription'."
+                "You can grant permission later by clicking 'Start Listening'."
             )
             
             # Disable the start button if no permission
@@ -539,25 +605,54 @@ class MainWindow(QMainWindow):
                 self.logger.info("Microphone permission granted")
                 # Refresh microphone list
                 self._load_microphones()
-                self.start_button.setText("Start Transcription")
+                self.start_button.setText("Start Listening")
             else:
                 self.logger.warning("Microphone permission still not granted")
                 return
         
         # Start transcription via controller
         if self.controller.start_transcription():
-            self.status_label.setText("Listening...")
+            self.status_label.setText("Listening... (Pause between sentences for automatic transcription)")
             self.start_button.setEnabled(False)
             self.stop_button.setEnabled(True)
+            self.ptt_button.setEnabled(True)  # Enable PTT button when recording is active
             
-            # Update VAD status label
-            self.vad_status_label.setText("VAD: Active")
+            # Update status labels based on mode
+            if self.controller.is_push_to_talk_mode():
+                self.vad_status_label.setText("Push-to-Talk Mode: Active - Press hotkey or button to speak")
+            else:
+                self.vad_status_label.setText("VAD: Active - Detecting speech segments automatically")
             
             # Start the recording indicator animation
             self.recording_indicator_active = True
             self.recording_indicator_timer.start(500)  # Update every 500ms
             
-            self.logger.info("Transcription started")
+            self.logger.info("Continuous transcription started")
+            
+            # Show message box with usage instructions based on selected mode
+            if self.controller.is_push_to_talk_mode():
+                QMessageBox.information(
+                    self,
+                    "Push-to-Talk Mode",
+                    "The application is now in push-to-talk mode:\n\n"
+                    "1. Press and hold Ctrl+Alt+T while speaking\n"
+                    "2. Release the keys when done to trigger transcription\n"
+                    "3. Focus your cursor in the desired text field before pressing the hotkey\n"
+                    "4. Click 'Stop' only when you're completely done with all transcription\n\n"
+                    "This mode gives you more control over when transcription happens."
+                )
+            else:
+                QMessageBox.information(
+                    self,
+                    "Continuous Transcription Mode",
+                    "The application is now in continuous listening mode:\n\n"
+                    "1. Speak naturally into your microphone\n"
+                    "2. Pause slightly between sentences\n"
+                    "3. Each speech segment will be transcribed automatically after you pause\n"
+                    "4. Focus your cursor in the desired text field before speaking\n"
+                    "5. Click 'Stop' only when you're completely done with transcription\n\n"
+                    "You don't need to stop and restart between speech segments."
+                )
         else:
             self.logger.error("Failed to start transcription")
             self._update_error_log("Failed to start transcription. Check microphone access.")
@@ -566,7 +661,7 @@ class MainWindow(QMainWindow):
             has_permission = PermissionDialog.check_and_request_permission(self)
             if has_permission:
                 self._load_microphones()
-                self.start_button.setText("Start Transcription")
+                self.start_button.setText("Start Listening")
             else:
                 self.start_button.setText("Request Permission")
     
@@ -577,9 +672,10 @@ class MainWindow(QMainWindow):
             self.status_label.setText("Ready")
             self.start_button.setEnabled(True)
             self.stop_button.setEnabled(False)
+            self.ptt_button.setEnabled(False)  # Disable PTT button when not recording
             
             # Update VAD status label
-            self.vad_status_label.setText("VAD: Not Active")
+            self.vad_status_label.setText("Not Active")
             
             # Stop the recording indicator animation
             self.recording_indicator_active = False
@@ -936,27 +1032,47 @@ class MainWindow(QMainWindow):
             """
             <h2>Speech-to-Text Tool User Guide</h2>
             
-            <h3>Basic Usage</h3>
+            <h3>Two Ways to Transcribe</h3>
+            <p>This application offers two transcription modes for different needs:</p>
+            
+            <h4>1. Continuous Transcription Mode (Default)</h4>
+            <p>This mode uses Voice Activity Detection to automatically detect when you speak:</p>
             <ol>
                 <li>Select your microphone from the dropdown</li>
-                <li>Click "Start Transcription" to begin</li>
-                <li>Speak into your microphone</li>
-                <li>Text will be transcribed and inserted into the focused text field</li>
-                <li>Click "Stop" when finished</li>
+                <li>Click "Start Listening" once</li>
+                <li>Speak naturally, pausing slightly between sentences</li>
+                <li>Each speech segment will be automatically detected and transcribed</li>
+                <li>Focus your cursor in the desired text field <i>before</i> speaking</li>
+                <li>Text will be inserted into the focused field after each speech segment</li>
+                <li>Click "Stop" only when you're completely done with all transcription</li>
             </ol>
             
-            <h3>Tips</h3>
+            <h4>2. Push-to-Talk Mode (New!)</h4>
+            <p>For more precise control and faster response, use Push-to-Talk mode:</p>
+            <ol>
+                <li>Select "Push to Talk" from the Transcription > Transcription Mode menu</li>
+                <li>Click "Start Listening" to activate the system</li>
+                <li>Place your cursor where you want text inserted</li>
+                <li>Press and hold <b>Ctrl+Alt+T</b> while speaking</li>
+                <li>Release the keys when done to trigger transcription</li>
+                <li>Text will be inserted almost immediately</li>
+            </ol>
+            
+            <h3>Tips for Best Results</h3>
             <ul>
-                <li>Make sure you click into the text field where you want the text inserted before speaking</li>
-                <li>The application detects when you're speaking, so it won't transcribe silence</li>
+                <li>In continuous mode, pause for 0.5-1 second between sentences to trigger transcription</li>
+                <li>For faster response, try Push-to-Talk mode instead of continuous listening</li>
+                <li>Place your cursor in the target text field before speaking</li>
+                <li>The green indicator shows when speech is actively being detected</li>
+                <li>You can adjust VAD sensitivity in Settings if needed</li>
                 <li>You can export your transcription history to a text file from the File menu</li>
-                <li>Adjust VAD sensitivity in Settings if you find it's not detecting your speech properly</li>
             </ul>
             
             <h3>Keyboard Shortcuts</h3>
             <table>
-                <tr><td><b>F5</b></td><td>Start Transcription</td></tr>
-                <tr><td><b>F6</b></td><td>Stop Transcription</td></tr>
+                <tr><td><b>F5</b></td><td>Start Listening</td></tr>
+                <tr><td><b>F6</b></td><td>Stop Listening</td></tr>
+                <tr><td><b>Ctrl+Alt+T</b></td><td>Push-to-Talk (hold while speaking)</td></tr>
                 <tr><td><b>Ctrl+E</b></td><td>Export Transcription History</td></tr>
                 <tr><td><b>Ctrl+,</b></td><td>Open Settings</td></tr>
                 <tr><td><b>Ctrl+1-3</b></td><td>Switch between tabs</td></tr>
@@ -970,9 +1086,136 @@ class MainWindow(QMainWindow):
         QMessageBox.information(
             self,
             "Check for Updates",
-            "You are running the latest version of the Speech-to-Text Tool.\n\n"
+            "This functionality is coming soon.\n\n"
             f"Current version: {APP_VERSION}"
         )
+    
+    def eventFilter(self, obj, event):
+        """Filter events to detect key releases for push-to-talk"""
+        from PyQt6.QtCore import QEvent
+        from PyQt6.QtGui import QKeyEvent
+        
+        if event.type() == QEvent.Type.KeyRelease:
+            # The event is already a QKeyEvent - no need to convert it
+            if isinstance(event, QKeyEvent):
+                # Check for Ctrl+Alt+T release
+                if (self.ptt_active and 
+                    (event.key() == Qt.Key.Key_T or 
+                     event.key() == Qt.Key.Key_Control or 
+                     event.key() == Qt.Key.Key_Alt)):
+                    self._on_ptt_key_released()
+                
+        return super().eventFilter(obj, event)
+    
+    def _on_ptt_key_pressed(self):
+        """Handle push-to-talk key press"""
+        try:
+            # Check if we're in a state where PTT should work
+            if not self.controller.is_transcribing:
+                self.logger.debug("Push-to-talk key pressed, but transcription is not active")
+                return
+                
+            if not self.controller.is_push_to_talk_mode():
+                self.logger.debug("Push-to-talk key pressed, but not in PTT mode")
+                return
+                
+            # Set active state and start recording
+            if not self.ptt_active:
+                self.ptt_active = True
+                self.logger.info("Push-to-talk activated (hotkey pressed)")
+                # Show visual feedback
+                self.recording_indicator.setStyleSheet("color: green; font-size: 16px;")
+                self.speech_indicator.setStyleSheet("color: green;")
+                self.speech_indicator.setText("Speech: Active (Push-to-Talk)")
+                # Start recording
+                self.controller.push_to_talk_start()
+        except Exception as e:
+            self.logger.error(f"Error in push-to-talk key press handler: {str(e)}")
+    
+    def _on_ptt_key_released(self):
+        """Handle push-to-talk key release"""
+        try:
+            if self.ptt_active:
+                self.ptt_active = False
+                self.logger.info("Push-to-talk deactivated (hotkey released)")
+                # Show visual feedback
+                self.recording_indicator.setStyleSheet("color: red; font-size: 16px;")
+                self.speech_indicator.setStyleSheet("color: gray;")
+                self.speech_indicator.setText("Speech: Processing...")
+                # End recording and process audio
+                self.controller.push_to_talk_end()
+        except Exception as e:
+            self.logger.error(f"Error in push-to-talk key release handler: {str(e)}")
+    
+    def _on_continuous_mode_clicked(self):
+        """Switch to continuous mode"""
+        # Update both mode actions to ensure they're in sync
+        self.continuous_mode_action.setChecked(True)
+        self.ptt_mode_action.setChecked(False)
+        
+        # Update controller
+        self.controller.set_push_to_talk_mode(False)
+        
+        # Update UI
+        self.continuous_instruction_label.setVisible(True)
+        self.ptt_instruction_label.setVisible(False)
+        
+        self.logger.info("Switched to continuous mode")
+        
+        # If currently transcribing, restart to apply mode change
+        if self.controller.is_transcribing:
+            was_active = self.controller.is_transcribing
+            self.controller.stop_transcription()
+            if was_active:
+                self.controller.start_transcription()
+    
+    def _on_ptt_mode_clicked(self):
+        """Switch to push-to-talk mode"""
+        # Update both mode actions to ensure they're in sync
+        self.continuous_mode_action.setChecked(False)
+        self.ptt_mode_action.setChecked(True)
+        
+        # Update controller
+        self.controller.set_push_to_talk_mode(True)
+        
+        # Update UI
+        self.continuous_instruction_label.setVisible(False)
+        self.ptt_instruction_label.setVisible(True)
+        
+        # Update PTT button appearance
+        self.ptt_button.setStyleSheet("QPushButton { font-weight: bold; } QPushButton:pressed { background-color: #4CAF50; }")
+        
+        self.logger.info("Switched to push-to-talk mode")
+        
+        # If currently transcribing, restart to apply mode change
+        if self.controller.is_transcribing:
+            was_active = self.controller.is_transcribing
+            self.controller.stop_transcription()
+            if was_active:
+                self.controller.start_transcription()
+                self.vad_status_label.setText("Push-to-Talk Mode: Active - Press hotkey or button to speak")
+                
+        # Show instructions for PTT mode
+        QMessageBox.information(
+            self,
+            "Push-to-Talk Mode",
+            "Push-to-Talk mode is now active:\n\n"
+            "1. Press and hold Ctrl+Alt+T while speaking, OR\n"
+            "2. Press and hold the 'Push to Talk' button while speaking\n"
+            "3. Release when done speaking to trigger transcription\n"
+            "4. Place your cursor where you want the text before speaking\n\n"
+            "This mode provides more control and faster response than continuous mode."
+        )
+    
+    def _on_ptt_button_pressed(self):
+        """Handle push-to-talk button press"""
+        # Use the same handler as the keyboard shortcut
+        self._on_ptt_key_pressed()
+    
+    def _on_ptt_button_released(self):
+        """Handle push-to-talk button release"""
+        # Use the same handler as the keyboard shortcut
+        self._on_ptt_key_released()
     
     def closeEvent(self, event):
         """Handle window close event to clean up resources"""
