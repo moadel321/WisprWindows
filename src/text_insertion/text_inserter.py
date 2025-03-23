@@ -262,6 +262,15 @@ class TextInserter:
                 
             # Method 3: Try clipboard approach
             try:
+                # Initialize COM for clipboard operations on Windows
+                try:
+                    import pythoncom
+                    pythoncom.CoInitialize()
+                    com_initialized = True
+                except (ImportError, Exception) as e:
+                    self.logger.warning(f"Could not initialize COM: {str(e)}")
+                    com_initialized = False
+                
                 # Remember original clipboard content
                 import win32clipboard
                 win32clipboard.OpenClipboard()
@@ -289,8 +298,24 @@ class TextInserter:
                     win32clipboard.CloseClipboard()
                 
                 self.logger.info(f"Text inserted using clipboard: {text[:20]}...")
+                
+                # Uninitialize COM if we initialized it
+                if com_initialized:
+                    try:
+                        pythoncom.CoUninitialize()
+                    except Exception:
+                        pass
+                
                 return True
             except Exception as e:
+                # Uninitialize COM if we initialized it
+                if 'com_initialized' in locals() and com_initialized:
+                    try:
+                        import pythoncom
+                        pythoncom.CoUninitialize()
+                    except Exception:
+                        pass
+                
                 self.logger.warning(f"Failed to insert text with clipboard: {str(e)}")
                 
             # Method 4: Fallback to character-by-character keypress simulation

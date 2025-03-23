@@ -39,6 +39,11 @@ def main():
         action="store_true", 
         help="Run performance tests instead of the application"
     )
+    parser.add_argument(
+        "--use-cuda",
+        action="store_true",
+        help="Enable CUDA GPU acceleration (requires CUDA 12.x)"
+    )
     
     args = parser.parse_args()
     
@@ -48,6 +53,14 @@ def main():
     # Set log level
     log_level = logging.DEBUG if args.debug else logging.INFO
     os.environ["STT_LOG_LEVEL"] = str(log_level)
+    
+    # Set CUDA usage flag
+    if args.use_cuda:
+        os.environ["STT_USE_CUDA"] = "1"
+        print("CUDA acceleration enabled - using GPU for transcription")
+    else:
+        os.environ["STT_USE_CUDA"] = "0"
+        print("Using CPU for transcription (use --use-cuda to enable GPU acceleration if compatible)")
     
     try:
         # Run tests if requested

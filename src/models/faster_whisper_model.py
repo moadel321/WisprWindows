@@ -3,6 +3,7 @@
 
 """
 Faster Whisper model implementation for speech recognition
+Using CUDA 12.1 for GPU acceleration (no fallbacks)
 """
 
 import os
@@ -10,47 +11,32 @@ import logging
 import time
 import torch
 import numpy as np
-import sys
 import ctypes
+import sys
 from typing import Optional, Dict, Any, List, Tuple, Union
 from pathlib import Path
 from threading import Lock
 
-# Function to try loading CUDA libraries
-def try_load_cuda_libraries():
-    """Try to manually load CUDA libraries to fix potential DLL loading issues"""
+# Function to load CUDA 12.1 libraries
+def load_cuda_libraries():
+    """Load CUDA 12.1 libraries required for Faster Whisper"""
     if sys.platform != "win32":
-        return False  # Only needed on Windows
+        return True  # Only needed on Windows
         
     try:
+        # CUDA 12.1 paths (specifically)
         cuda_paths = [
-            # Default CUDA installation paths
-            os.path.join(os.environ.get("CUDA_PATH", ""), "bin"),
-            "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v11.0\\bin",
-            "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v11.1\\bin",
-            "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v11.2\\bin",
-            "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v11.3\\bin",
-            "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v11.4\\bin",
-            "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v11.5\\bin",
-            "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v11.6\\bin",
-            "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v11.7\\bin",
-            "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v11.8\\bin",
-            "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.0\\bin",
             "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.1\\bin",
-            "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v12.2\\bin",
-            # Add the path to your system PATH
+            os.path.join(os.environ.get("CUDA_PATH", ""), "bin"),
             *os.environ.get("PATH", "").split(";")
         ]
         
-        # Libraries to try loading
+        # CUDA 12.1 libraries
         cuda_libraries = [
-            "cublas64_12", "cublasLt64_12",
-            "cublas64_11", "cublasLt64_11",
-            "cudart64_110", "cudart64_11",
-            "cudart64_12", "cudnn64_8", "cudnn64_7"
+            "cublas64_12", "cublasLt64_12", "cudart64_12", "cudnn64_8"
         ]
         
-        # Try to load each library from each path
+        # Try to load each library
         loaded_any = False
         for lib in cuda_libraries:
             for path in cuda_paths:
@@ -61,46 +47,36 @@ def try_load_cuda_libraries():
                 if os.path.exists(lib_path):
                     try:
                         ctypes.WinDLL(lib_path)
-                        logging.getLogger(__name__).info(f"Successfully loaded {lib}.dll from {path}")
+                        logging.getLogger(__name__).info(f"Loaded {lib}.dll from {path}")
                         loaded_any = True
                         break
                     except Exception as e:
-                        logging.getLogger(__name__).debug(f"Could not load {lib}.dll from {path}: {e}")
+                        logging.getLogger(__name__).debug(f"Could not load {lib}.dll: {e}")
             
         return loaded_any
     except Exception as e:
-        logging.getLogger(__name__).warning(f"Error trying to load CUDA libraries: {e}")
+        logging.getLogger(__name__).warning(f"Error loading CUDA libraries: {e}")
         return False
 
-# FORCE CPU MODE due to persistent CUDA library issues
-# This directly addresses the "cublas64_12.dll not found" error
-os.environ["CUDA_VISIBLE_DEVICES"] = "-1"  # Hide all CUDA devices from PyTorch
-logging.getLogger(__name__).warning("FORCING CPU MODE: CUDA disabled due to persistent library issues")
-logging.getLogger(__name__).warning("This will make transcription slower but more reliable")
+# Check if CUDA should be used
+USE_CUDA = os.environ.get("STT_USE_CUDA", "0").lower() in ("1", "true", "yes", "on")
 
-# Try to load CUDA libraries before importing WhisperModel
-loaded_libs = try_load_cuda_libraries()
-if loaded_libs:
-    logging.getLogger(__name__).info("Successfully loaded CUDA libraries")
+if USE_CUDA:
+    logging.getLogger(__name__).info("CUDA mode enabled via STT_USE_CUDA environment variable")
+    # Set CUDA 12.1 compatibility
+    os.environ["CT2_CUDA_COMPATIBILITY"] = "12.1"
+    # Load CUDA libraries
+    if load_cuda_libraries():
+        logging.getLogger(__name__).info("Successfully loaded CUDA 12.1 libraries")
+    else:
+        logging.getLogger(__name__).warning("Failed to load CUDA 12.1 libraries")
+else:
+    # Force CPU mode
+    os.environ["CUDA_VISIBLE_DEVICES"] = "-1"
+    logging.getLogger(__name__).info("Using CPU mode (set STT_USE_CUDA=1 to enable CUDA)")
 
 # Import after setting environment variables
-try:
-    from faster_whisper import WhisperModel
-    logging.getLogger(__name__).info("Successfully imported faster_whisper")
-except ImportError:
-    logging.getLogger(__name__).error("Could not import faster_whisper. Make sure it's installed: pip install faster-whisper")
-except Exception as e:
-    logging.getLogger(__name__).error(f"Error importing faster_whisper: {e}")
-    
-    # Attempt cleanup of any CUDA context that might be causing issues
-    try:
-        torch.cuda.empty_cache()
-        logging.getLogger(__name__).info("Cleared CUDA cache")
-    except:
-        pass
-    
-    # Reattempt import
-    from faster_whisper import WhisperModel
+from faster_whisper import WhisperModel
 
 from src.utils.constants import (
     DEFAULT_SAMPLE_RATE,
@@ -111,7 +87,7 @@ from src.utils.constants import (
 
 class FasterWhisperModel:
     """
-    Handles speech recognition using the Faster Whisper model
+    Handles speech recognition using the Faster Whisper model with CUDA 12.1
     """
     
     def __init__(
@@ -149,17 +125,18 @@ class FasterWhisperModel:
         self.download_root = download_root
         self.local_files_only = local_files_only
         
-        # FORCE CPU for transcription regardless of CUDA availability
-        self.device = "cpu"
-        self.logger.warning("FORCED CPU MODE: Using CPU for transcription due to CUDA compatibility issues")
+        # Device selection (CUDA or CPU)
+        if USE_CUDA and torch.cuda.is_available():
+            self.device = "cuda"
+            self.logger.info(f"Using CUDA 12.1 for transcription (CUDA: {torch.version.cuda})")
+            # Default to float16 for CUDA
+            self.compute_type = compute_type or "float16"
+        else:
+            self.device = "cpu"
+            self.logger.info("Using CPU for transcription")
+            # Default to int8 for CPU
+            self.compute_type = compute_type or "int8"
         
-        # Set compute type for CPU
-        if compute_type is None:
-            compute_type = "int8"  # int8 is faster and uses less memory on CPU
-                
-        self.logger.info(f"Using compute type: {compute_type} on {self.device}")
-        
-        self.compute_type = compute_type
         self.cpu_threads = cpu_threads
         self.num_workers = num_workers
         
@@ -184,22 +161,20 @@ class FasterWhisperModel:
                 self.logger.info(f"Loading Faster Whisper model {self.model_name} on {self.device}...")
                 start_time = time.time()
                 
-                # Three possible paths:
-                # 1. If model_dir contains a specific model folder (e.g., distil-large-v3), use model_dir
-                # 2. If model_dir is a parent directory and model_name is specified, construct path to model
-                # 3. If only model_name is provided, treat it as a HuggingFace model ID
-                
+                # Find the model path
                 model_path = None
                 
-                # Check if model_dir points to a specific model with model.bin
-                if self.model_dir and os.path.exists(os.path.join(self.model_dir, "model.bin")):
+                # Check if model_dir points to a specific model with model files
+                if self.model_dir and (os.path.exists(os.path.join(self.model_dir, "model.bin")) or 
+                                       os.path.exists(os.path.join(self.model_dir, "ct2_model.bin"))):
                     model_path = self.model_dir
                     self.logger.info(f"Using model at {model_path}")
                 
-                # Check if model_dir/model_name exists with model.bin
+                # Check if model_dir/model_name exists with model files
                 elif self.model_dir and self.model_name:
                     potential_path = os.path.join(self.model_dir, self.model_name)
-                    if os.path.exists(os.path.join(potential_path, "model.bin")):
+                    if os.path.exists(os.path.join(potential_path, "model.bin")) or \
+                       os.path.exists(os.path.join(potential_path, "ct2_model.bin")):
                         model_path = potential_path
                         self.logger.info(f"Using model at {model_path}")
                     
@@ -208,45 +183,16 @@ class FasterWhisperModel:
                     model_path = self.model_name
                     self.logger.info(f"Using model name as identifier: {model_path}")
                 
-                # Load the model with error handling
-                try:
-                    # Set CUDA environment variables to ensure compatibility with CUDA 11.8
-                    if self.device == "cuda":
-                        # Tell CTranslate2 to use CUDA 11 compatible kernels
-                        os.environ["CT2_CUDA_COMPATIBILITY"] = "11.8"
-                        self.logger.info("Set CUDA compatibility mode to 11.8")
-                    
-                    self.model = WhisperModel(
-                        model_path,
-                        device=self.device,
-                        compute_type=self.compute_type,
-                        cpu_threads=self.cpu_threads,
-                        num_workers=self.num_workers,
-                        download_root=self.download_root,
-                        local_files_only=self.local_files_only
-                    )
-                except Exception as e:
-                    # If CUDA fails, fall back to CPU
-                    if self.device == "cuda" and ("cuda" in str(e).lower() or "cublas" in str(e).lower() or "dll" in str(e).lower()):
-                        self.logger.warning(f"Failed to load model with CUDA: {str(e)}")
-                        self.logger.info("Trying to fall back to CPU...")
-                        self.device = "cpu"
-                        self.compute_type = "int8"
-                        
-                        # Try again with CPU
-                        self.model = WhisperModel(
-                            model_path,
-                            device=self.device,
-                            compute_type=self.compute_type,
-                            cpu_threads=self.cpu_threads,
-                            num_workers=self.num_workers,
-                            download_root=self.download_root,
-                            local_files_only=self.local_files_only
-                        )
-                        self.logger.info("Successfully loaded model using CPU instead of CUDA")
-                    else:
-                        # Re-raise the exception if it's not CUDA-related
-                        raise
+                # Load the model
+                self.model = WhisperModel(
+                    model_path,
+                    device=self.device,
+                    compute_type=self.compute_type,
+                    cpu_threads=self.cpu_threads,
+                    num_workers=self.num_workers,
+                    download_root=self.download_root,
+                    local_files_only=self.local_files_only
+                )
                 
                 load_time = time.time() - start_time
                 self.logger.info(f"Faster Whisper model loaded in {load_time:.2f} seconds")
@@ -271,15 +217,11 @@ class FasterWhisperModel:
         patience: float = 1.0,
         temperature: Tuple[float, ...] = (0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
         best_of: int = None,
-        temperature_increment_on_fallback: float = None,  # Parameter kept for compatibility but not used
         compression_ratio_threshold: float = 2.4,
-        logprob_threshold: float = None,  # Parameter kept for compatibility but not used
         no_speech_threshold: float = 0.6,
         condition_on_previous_text: bool = True,
         max_initial_timestamp: float = 1.0,
-        timeout: float = DEFAULT_WHISPER_TIMEOUT,  # Handled internally, not passed to model
-        suppress_tokens: List[int] = None,  # Parameter kept for compatibility but not used
-        batch_size: int = None  # Parameter kept for compatibility but not used
+        timeout: float = DEFAULT_WHISPER_TIMEOUT
     ) -> Dict[str, Any]:
         """
         Transcribe audio using the Faster Whisper model
@@ -296,15 +238,11 @@ class FasterWhisperModel:
             patience: Beam search patience factor
             temperature: Temperature for sampling
             best_of: Number of samples to generate and select the best from
-            temperature_increment_on_fallback: Temperature increment when falling back
             compression_ratio_threshold: Compression ratio threshold
-            logprob_threshold: Log probability threshold
             no_speech_threshold: No speech threshold
             condition_on_previous_text: Whether to condition on previous text
             max_initial_timestamp: Maximum initial timestamp
-            timeout: Timeout in seconds
-            suppress_tokens: List of token IDs to suppress
-            batch_size: Batch size for processing
+            timeout: Timeout in seconds (not used in Faster Whisper)
             
         Returns:
             Dict[str, Any]: Result with transcription and metadata
@@ -324,125 +262,26 @@ class FasterWhisperModel:
             # Configure VAD parameters if needed
             vad_params = vad_parameters if vad_parameters else {}
             
-            # Transcribe the audio with fallback to CPU if needed
-            try:
-                segments, info = self.model.transcribe(
-                    audio_file,
-                    language=lang,
-                    task=task,
-                    initial_prompt=initial_prompt,
-                    beam_size=beam_size,
-                    patience=patience,
-                    temperature=temperature,
-                    best_of=best_of,
-                    # temperature_increment_on_fallback parameter removed as it's not supported
-                    compression_ratio_threshold=compression_ratio_threshold,
-                    # logprob_threshold parameter removed as it's not supported
-                    no_speech_threshold=no_speech_threshold,
-                    condition_on_previous_text=condition_on_previous_text,
-                    word_timestamps=word_timestamps,
-                    vad_filter=vad_filter,
-                    vad_parameters=vad_params,
-                    max_initial_timestamp=max_initial_timestamp,
-                    # suppress_tokens parameter removed as it's not supported
-                    # batch_size parameter removed as it's not supported
-                )
-            except Exception as e:
-                # Check if this is a CUDA or DLL-related error
-                if self.device == "cuda" and ("cuda" in str(e).lower() or "cublas" in str(e).lower() or "dll" in str(e).lower()):
-                    self.logger.warning(f"CUDA error during transcription: {str(e)}")
-                    
-                    # Try with a different compute type first if we're using CUDA
-                    if self.compute_type == "float16":
-                        self.logger.info("Trying with int8 compute type...")
-                        try:
-                            # First, reload the model with int8
-                            temp_model = WhisperModel(
-                                self.model_dir or self.model_name,
-                                device="cuda",  # Still try on CUDA first
-                                compute_type="int8",  # Use int8 instead of float16
-                                cpu_threads=self.cpu_threads,
-                                num_workers=self.num_workers
-                            )
-                            
-                            # Try transcription with int8 model
-                            segments, info = temp_model.transcribe(
-                                audio_file,
-                                language=lang,
-                                task=task,
-                                initial_prompt=initial_prompt,
-                                beam_size=beam_size,
-                                patience=patience,
-                                temperature=temperature,
-                                best_of=best_of,
-                                compression_ratio_threshold=compression_ratio_threshold,
-                                no_speech_threshold=no_speech_threshold,
-                                condition_on_previous_text=condition_on_previous_text,
-                                word_timestamps=word_timestamps,
-                                vad_filter=vad_filter,
-                                vad_parameters=vad_params,
-                                max_initial_timestamp=max_initial_timestamp,
-                            )
-                            
-                            # If successful, update our model permanently to int8
-                            self.model = temp_model
-                            self.compute_type = "int8"
-                            self.logger.info("Successfully switched to int8 compute type")
-                            # Continue with normal processing
-                        except Exception as int8_error:
-                            self.logger.warning(f"int8 compute type also failed: {str(int8_error)}")
-                            
-                            # Last resort: Fall back to CPU
-                            self.logger.info("Falling back to CPU for this transcription...")
-                            
-                            # Create a CPU version of the model for this transcription
-                            with self.model_lock:
-                                try:
-                                    # Load the model on CPU
-                                    self.logger.info("Loading temporary CPU model...")
-                                    
-                                    # Permanently switch to CPU
-                                    self.device = "cpu"
-                                    self.compute_type = "int8"
-                                    
-                                    self.model = WhisperModel(
-                                        self.model_dir or self.model_name,
-                                        device="cpu",
-                                        compute_type="int8",
-                                        cpu_threads=self.cpu_threads,
-                                        num_workers=self.num_workers
-                                    )
-                                    
-                                    # Try again with CPU model
-                                    segments, info = self.model.transcribe(
-                                        audio_file,
-                                        language=lang,
-                                        task=task,
-                                        initial_prompt=initial_prompt,
-                                        beam_size=beam_size,
-                                        patience=patience,
-                                        temperature=temperature,
-                                        best_of=best_of,
-                                        compression_ratio_threshold=compression_ratio_threshold,
-                                        no_speech_threshold=no_speech_threshold,
-                                        condition_on_previous_text=condition_on_previous_text,
-                                        word_timestamps=word_timestamps,
-                                        vad_filter=vad_filter,
-                                        vad_parameters=vad_params,
-                                        max_initial_timestamp=max_initial_timestamp,
-                                    )
-                                    
-                                    self.logger.info("Successfully switched to CPU for transcription")
-                                    # Continue with normal processing
-                                except Exception as cpu_error:
-                                    # Re-raise the CPU error as our last hope failed
-                                    self.logger.error(f"All fallback attempts failed: {str(cpu_error)}")
-                                    raise
-                else:
-                    # Not a CUDA error, re-raise
-                    raise
+            # Transcribe the audio
+            segments, info = self.model.transcribe(
+                audio_file,
+                language=lang,
+                task=task,
+                initial_prompt=initial_prompt,
+                beam_size=beam_size,
+                patience=patience,
+                temperature=temperature,
+                best_of=best_of,
+                compression_ratio_threshold=compression_ratio_threshold,
+                no_speech_threshold=no_speech_threshold,
+                condition_on_previous_text=condition_on_previous_text,
+                word_timestamps=word_timestamps,
+                vad_filter=vad_filter,
+                vad_parameters=vad_params,
+                max_initial_timestamp=max_initial_timestamp
+            )
             
-            # Convert generator to list to fully process the transcription
+            # Convert generator to list
             segments_list = list(segments)
             
             # Extract text and metadata
@@ -492,22 +331,6 @@ class FasterWhisperModel:
             self.logger.error(f"Error transcribing audio: {error_msg}")
             return {"success": False, "error": error_msg}
     
-    def get_available_models(self) -> List[str]:
-        """
-        Get list of available Faster Whisper models
-        
-        Returns:
-            List[str]: List of available model names
-        """
-        return [
-            "tiny", "tiny.en",
-            "base", "base.en",
-            "small", "small.en",
-            "medium", "medium.en",
-            "large-v1", "large-v2", "large-v3",
-            "distil-large-v3"
-        ]
-    
     def get_model_info(self) -> Dict[str, Any]:
         """
         Get information about the loaded model
@@ -527,7 +350,7 @@ class FasterWhisperModel:
         
         # Get device info
         if self.device == "cuda":
-            device_info = f"CUDA ({torch.cuda.get_device_name(0)})" if torch.cuda.is_available() else "CUDA (Not available)"
+            device_info = f"CUDA 12.1 ({torch.cuda.get_device_name(0)})" if torch.cuda.is_available() else "CUDA (Not available)"
             memory_allocated = f"{torch.cuda.memory_allocated() / 1024**3:.2f} GB"
             memory_reserved = f"{torch.cuda.memory_reserved() / 1024**3:.2f} GB"
         else:
@@ -541,8 +364,6 @@ class FasterWhisperModel:
             "device": device_info,
             "precision": self.compute_type,
             "language": self.language,
-            "avg_inference_time": "N/A",  # Not tracked in this implementation
-            "num_inferences": 0,  # Not tracked in this implementation
             "memory_allocated": memory_allocated,
             "memory_reserved": memory_reserved,
             "is_ready": True
@@ -555,46 +376,6 @@ class FasterWhisperModel:
             torch.cuda.empty_cache()
             self.logger.info("Model resources released")
     
-    def get_model_info(self) -> Dict[str, Any]:
-        """
-        Get information about the loaded model
-        
-        Returns:
-            Dict[str, Any]: Model information
-        """
-        # Check if model is loaded
-        if self.model is None:
-            return {
-                "model_name": self.model_name,
-                "status": "Not loaded",
-                "device": self.device,
-                "compute_type": self.compute_type,
-                "language": self.language
-            }
-        
-        # Get device info
-        if self.device == "cuda":
-            device_info = f"CUDA ({torch.cuda.get_device_name(0)})" if torch.cuda.is_available() else "CUDA (Not available)"
-            memory_allocated = f"{torch.cuda.memory_allocated() / 1024**3:.2f} GB"
-            memory_reserved = f"{torch.cuda.memory_reserved() / 1024**3:.2f} GB"
-        else:
-            device_info = "CPU"
-            memory_allocated = "N/A"
-            memory_reserved = "N/A"
-        
-        return {
-            "model_name": self.model_name,
-            "status": "Loaded",
-            "device": device_info,
-            "precision": self.compute_type,
-            "language": self.language,
-            "avg_inference_time": "N/A",  # Not tracked in this implementation
-            "num_inferences": 0,  # Not tracked in this implementation
-            "memory_allocated": memory_allocated,
-            "memory_reserved": memory_reserved,
-            "is_ready": True
-        }
-        
     @staticmethod
     def find_available_models(directory: str) -> Dict[str, str]:
         """

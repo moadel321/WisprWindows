@@ -845,7 +845,7 @@ class MainWindow(QMainWindow):
             <p>PyWinAuto for text insertion capabilities</p>
             
             <p style="margin-top: 30px; font-style: italic; color: #666;">
-                Created according to the PRD requirements
+                Created by Mo Adel
             </p>
         </div>
         """
@@ -856,6 +856,7 @@ class MainWindow(QMainWindow):
         """Handle export history button click"""
         from datetime import datetime
         import os
+        import sys
         
         # Get the transcription history from the controller
         history = self.controller.get_history()
@@ -880,6 +881,16 @@ class MainWindow(QMainWindow):
             return  # User cancelled
             
         try:
+            # Initialize COM for Windows clipboard operations
+            if sys.platform == 'win32':
+                try:
+                    # Import the pywin32 module only on Windows
+                    import pythoncom
+                    pythoncom.CoInitialize()
+                    self.logger.debug("COM initialized for clipboard operations")
+                except (ImportError, Exception) as e:
+                    self.logger.warning(f"Could not initialize COM: {str(e)}")
+            
             # Write history to file
             with open(export_path, 'w', encoding='utf-8') as f:
                 f.write("Speech-to-Text Transcription History\n")
@@ -894,6 +905,8 @@ class MainWindow(QMainWindow):
                     f.write(f"{text}\n\n")
                     
             self.logger.info(f"Transcription history exported to {export_path}")
+            
+            # Show success message
             QMessageBox.information(
                 self, "Export Successful", 
                 f"Transcription history has been exported to:\n{export_path}"
@@ -905,6 +918,15 @@ class MainWindow(QMainWindow):
                 self, "Export Failed", 
                 f"Failed to export transcription history:\n{str(e)}"
             )
+        finally:
+            # Uninitialize COM when done with clipboard operations
+            if sys.platform == 'win32':
+                try:
+                    import pythoncom
+                    pythoncom.CoUninitialize()
+                    self.logger.debug("COM uninitialized after clipboard operations")
+                except (ImportError, Exception) as e:
+                    pass
     
     def _on_help_clicked(self):
         """Handle help menu item click"""
