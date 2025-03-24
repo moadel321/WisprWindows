@@ -49,6 +49,10 @@ A Windows desktop application that enhances productivity by converting spoken wo
    # Create models directory
    mkdir -p ~/whisper-models
    
+   # Authenticate to HuggingFace using the CLI login tool
+   Run "huggingface-cli login" to authenticate 
+
+
    # Download the model (choose one):
    # For best accuracy (larger model, but slower on CPU):
    python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='distil-whisper/distil-large-v3', local_dir='~/whisper-models/distil-large-v3', local_dir_use_symlinks=False)"
@@ -63,10 +67,10 @@ A Windows desktop application that enhances productivity by converting spoken wo
 4. **Run the application:**
    ```
    # CPU mode (default)
-   python run.py --model-path ~/whisper-models/distil-large-v3
+   python run.py
    
    # Or with GPU acceleration if you have CUDA 12.x installed:
-   python run.py --model-path ~/whisper-models/distil-large-v3 --use-cuda
+   python run.py  --use-cuda
    ```
 
 ### GPU Acceleration Setup
@@ -74,7 +78,7 @@ A Windows desktop application that enhances productivity by converting spoken wo
 > **Note:** The application runs in CPU mode by default for maximum compatibility. To use GPU acceleration for faster transcription:
 
 1. **Install NVIDIA CUDA Dependencies:**
-   - Download and install [NVIDIA CUDA Toolkit 12.x](https://developer.nvidia.com/cuda-downloads) (required for latest faster-whisper)
+   - Download and install [NVIDIA CUDA Toolkit 12.1](https://developer.nvidia.com/cuda-downloads) (required for latest faster-whisper)
    - Download and install [NVIDIA cuDNN](https://developer.nvidia.com/cudnn) compatible with your CUDA version
    - Add CUDA bin directory to your system PATH environment variable
 
@@ -138,6 +142,23 @@ The `run.py` script supports several command-line arguments:
 - `--test`: Run system tests
 - `--performance`: Run performance tests
 
+## Building into a Standalone Windows Executable
+
+You can package the application as a standalone Windows executable using the included build script:
+
+```bash
+# Basic build (creates a directory with the executable and dependencies)
+python build_executable.py
+
+# Create a single-file executable
+python build_executable.py --one-file --no-console
+
+# Include a specific model in the package
+python build_executable.py --include-models --model-path ~/whisper-models/small
+```
+
+For detailed packaging instructions, see [the Packaging Guide](docs/PACKAGING_GUIDE.md).
+
 ## Testing
 
 Run the comprehensive test suite:
@@ -185,13 +206,13 @@ python tests/test_faster_whisper.py --model-path ~/whisper-models/distil-large-v
 
 The application currently defaults to CPU mode due to incompatibilities between faster-whisper library dependencies and various CUDA versions. Specifically, newer versions of faster-whisper require:
 
-- CUDA 12.x libraries (specifically cublas64_12.dll)
-- CTranslate2 compiled against CUDA 12.x
+- CUDA 12.1 libraries (specifically cublas64_12.dll)
+- CTranslate2 compiled against CUDA 12.1
 - Matching cuDNN libraries
 
 If you're experiencing the error `Library cublas64_12.dll is not found or cannot be loaded` when trying to use GPU mode, you have the following options:
 
-1. **Update to CUDA 12.x**: Install the latest CUDA 12.x toolkit and compatible cuDNN
+1. **Update to CUDA 12.1**: Install the latest CUDA 12.x toolkit and compatible cuDNN
 2. **Use CPU mode**: Our app now defaults to CPU mode for reliability
 3. **Try older faster-whisper**: Install specific versions that work with your CUDA:
    ```

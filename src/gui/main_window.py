@@ -242,20 +242,9 @@ class MainWindow(QMainWindow):
         self.stop_button.setEnabled(False)
         self.stop_button.setToolTip("Stop listening completely")
         
-        # Push-to-talk button as an alternative to keyboard shortcut
-        self.ptt_button = QPushButton("Push to Talk")
-        self.ptt_button.setStyleSheet("QPushButton:pressed { background-color: #4CAF50; }")
-        self.ptt_button.setMinimumWidth(130)
-        self.ptt_button.setEnabled(False)  # Initially disabled
-        self.ptt_button.setToolTip("Press and hold to record speech, release to transcribe")
-        # Connect mouse events
-        self.ptt_button.pressed.connect(self._on_ptt_button_pressed)
-        self.ptt_button.released.connect(self._on_ptt_button_released)
-        
         # Add all buttons
         controls_layout.addWidget(self.start_button)
         controls_layout.addWidget(self.stop_button)
-        controls_layout.addWidget(self.ptt_button)
         
         # Add to top bar
         top_bar.addWidget(controls_group)
@@ -296,13 +285,6 @@ class MainWindow(QMainWindow):
         self.continuous_instruction_label.setStyleSheet("color: #4CAF50; padding: 5px; background-color: #2A2A2A; border-radius: 3px;")
         self.continuous_instruction_label.setWordWrap(True)
         main_layout.addWidget(self.continuous_instruction_label)
-        
-        # Create instruction label for push-to-talk mode (initially hidden)
-        self.ptt_instruction_label = QLabel("🎤 PUSH-TO-TALK MODE: Press and hold Ctrl+Alt+T while speaking, then release to transcribe. Focus your cursor where you want the text inserted.")
-        self.ptt_instruction_label.setStyleSheet("color: #4CAF50; padding: 5px; background-color: #2A2A2A; border-radius: 3px;")
-        self.ptt_instruction_label.setWordWrap(True)
-        self.ptt_instruction_label.setVisible(False)
-        main_layout.addWidget(self.ptt_instruction_label)
         
         # Add to main layout
         main_layout.addLayout(top_bar)
@@ -615,7 +597,6 @@ class MainWindow(QMainWindow):
             self.status_label.setText("Listening... (Pause between sentences for automatic transcription)")
             self.start_button.setEnabled(False)
             self.stop_button.setEnabled(True)
-            self.ptt_button.setEnabled(True)  # Enable PTT button when recording is active
             
             # Update status labels based on mode
             if self.controller.is_push_to_talk_mode():
@@ -672,7 +653,6 @@ class MainWindow(QMainWindow):
             self.status_label.setText("Ready")
             self.start_button.setEnabled(True)
             self.stop_button.setEnabled(False)
-            self.ptt_button.setEnabled(False)  # Disable PTT button when not recording
             
             # Update VAD status label
             self.vad_status_label.setText("Not Active")
@@ -840,7 +820,7 @@ class MainWindow(QMainWindow):
             item_text = f"[{timestamp}] {text}"
         else:
             item_text = text
-            
+        
         # Add to history list
         item = QListWidgetItem(item_text)
         
@@ -1158,7 +1138,6 @@ class MainWindow(QMainWindow):
         
         # Update UI
         self.continuous_instruction_label.setVisible(True)
-        self.ptt_instruction_label.setVisible(False)
         
         self.logger.info("Switched to continuous mode")
         
@@ -1180,10 +1159,6 @@ class MainWindow(QMainWindow):
         
         # Update UI
         self.continuous_instruction_label.setVisible(False)
-        self.ptt_instruction_label.setVisible(True)
-        
-        # Update PTT button appearance
-        self.ptt_button.setStyleSheet("QPushButton { font-weight: bold; } QPushButton:pressed { background-color: #4CAF50; }")
         
         self.logger.info("Switched to push-to-talk mode")
         
@@ -1193,7 +1168,6 @@ class MainWindow(QMainWindow):
             self.controller.stop_transcription()
             if was_active:
                 self.controller.start_transcription()
-                self.vad_status_label.setText("Push-to-Talk Mode: Active - Press hotkey or button to speak")
                 
         # Show instructions for PTT mode
         QMessageBox.information(
@@ -1206,16 +1180,6 @@ class MainWindow(QMainWindow):
             "4. Place your cursor where you want the text before speaking\n\n"
             "This mode provides more control and faster response than continuous mode."
         )
-    
-    def _on_ptt_button_pressed(self):
-        """Handle push-to-talk button press"""
-        # Use the same handler as the keyboard shortcut
-        self._on_ptt_key_pressed()
-    
-    def _on_ptt_button_released(self):
-        """Handle push-to-talk button release"""
-        # Use the same handler as the keyboard shortcut
-        self._on_ptt_key_released()
     
     def closeEvent(self, event):
         """Handle window close event to clean up resources"""

@@ -26,7 +26,7 @@ class TextInserter:
         self.logger = logging.getLogger(__name__)
         self.logger.info("TextInserter initialized")
         self.last_active_element = None
-        
+    
     def get_focused_element(self) -> Optional[Dict[str, Any]]:
         """
         Get information about the currently focused UI element
@@ -237,7 +237,7 @@ class TextInserter:
             
         start_time = time.time()
         self.logger.info(f"[TRACE:{trace_id}] Starting text insertion ({len(text)} chars)")
-            
+        
         try:
             # Get focused element
             element_check_start = time.time()
@@ -401,6 +401,7 @@ class TextInserter:
             total_time = time.time() - start_time
             self.logger.error(f"[TRACE:{trace_id}] All text insertion methods failed after {total_time:.3f}s")
             return False
+            
         except Exception as e:
             total_time = time.time() - start_time
             self.logger.error(f"[TRACE:{trace_id}] Error inserting text after {total_time:.3f}s: {str(e)}")
