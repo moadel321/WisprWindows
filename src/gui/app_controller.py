@@ -340,26 +340,31 @@ class AppController:
                 insert_start = time.time()
                 self.logger.info(f"[TRACE:{trace_id}] Starting text insertion")
                 insert_success = False
+                
                 try:
-                    # Check if element is editable
-                    if self.text_inserter.is_text_editable():
-                        # Insert the text - pass the trace_id to the inserter
-                        insert_success = self.text_inserter.insert_text(transcription_text, trace_id)
-                        insert_time = time.time() - insert_start
-                        if insert_success:
-                            self.logger.info(f"[TRACE:{trace_id}] Text successfully inserted in {insert_time:.3f}s")
-                        else:
-                            error_msg = f"Failed to insert text into focused element after {insert_time:.3f}s"
-                            self.logger.warning(f"[TRACE:{trace_id}] {error_msg}")
-                            if self.on_error_callback:
-                                self.on_error_callback(error_msg)
+                    # Attempt text insertion - don't check for editable since we're using more reliable methods now
+                    insert_success = self.text_inserter.insert_text(transcription_text, trace_id)
+                    insert_time = time.time() - insert_start
+                    
+                    if insert_success:
+                        self.logger.info(f"[TRACE:{trace_id}] Text successfully inserted in {insert_time:.3f}s using method: {self.text_inserter.last_insertion_method}")
                     else:
-                        self.logger.warning(f"[TRACE:{trace_id}] Focused element is not editable")
-                        error_msg = "Focused element is not editable"
+                        error_msg = f"Failed to insert text into focused element after {insert_time:.3f}s"
+                        self.logger.warning(f"[TRACE:{trace_id}] {error_msg}")
                         if self.on_error_callback:
                             self.on_error_callback(error_msg)
                 except Exception as e:
+                    # Log detailed error info to help diagnose insertion issues
                     self.logger.error(f"[TRACE:{trace_id}] Error inserting text: {str(e)}")
+                    
+                    # Try to get information about current element for debugging
+                    try:
+                        element_info = self.text_inserter.get_focused_element()
+                        if element_info:
+                            self.logger.info(f"[TRACE:{trace_id}] Failed insertion target: {element_info['app']} ({element_info['control_type']})")
+                    except Exception:
+                        pass
+                    
                     if self.on_error_callback:
                         self.on_error_callback(f"Text insertion error: {str(e)}")
                 
@@ -458,21 +463,62 @@ class AppController:
         """
         self.logger.info("Stopping transcription process")
         
-        # Stop microphone recording
-        mic_result = self.mic_manager.stop_recording()
+        success = True
         
-        # Stop VAD processing
-        vad_result = self.vad_processor.stop_processing()
+        try:
+            # Stop microphone recording
+            mic_result = self.mic_manager.stop_recording()
+            if not mic_result:
+                self.logger.warning("Error stopping microphone recording")
+                success = False
+        except Exception as e:
+            self.logger.error(f"Exception stopping microphone recording: {str(e)}")
+            success = False
         
-        # Reset state
+        try:
+            # Stop VAD processing
+            vad_result = self.vad_processor.stop_processing()
+            if not vad_result:
+                self.logger.warning("Error stopping VAD processor")
+                success = False
+        except Exception as e:
+            self.logger.error(f"Exception stopping VAD processing: {str(e)}")
+            success = False
+        
+        # Wait for any pending transcription to finish (with timeout)
+        if self.is_processing_transcription:
+            self.logger.info("Waiting for pending transcription to complete...")
+            try:
+                start_wait = time.time()
+                max_wait = 3.0  # Maximum 3 seconds wait
+                
+                while self.is_processing_transcription and (time.time() - start_wait) < max_wait:
+                    time.sleep(0.1)
+                    
+                if self.is_processing_transcription:
+                    self.logger.warning("Timed out waiting for transcription to complete")
+                    # Force reset the flag
+                    with self.transcription_lock:
+                        self.is_processing_transcription = False
+            except Exception as e:
+                self.logger.error(f"Error waiting for transcription completion: {str(e)}")
+                # Force reset the flag
+                with self.transcription_lock:
+                    self.is_processing_transcription = False
+        
+        # Reset state regardless of errors
         self.is_transcribing = False
         
         # Reset speech detection state and notify UI if necessary
         if self.speech_detected and self.on_speech_detected_callback:
-            self.speech_detected = False
-            self.on_speech_detected_callback(False)
+            try:
+                self.speech_detected = False
+                self.on_speech_detected_callback(False)
+            except Exception as e:
+                self.logger.error(f"Error in speech detection callback: {str(e)}")
         
-        return mic_result and vad_result
+        self.logger.info(f"Transcription stopped (success={success})")
+        return success
     
     def add_to_history(self, text: str) -> None:
         """

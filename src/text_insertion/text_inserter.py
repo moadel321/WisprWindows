@@ -2,23 +2,27 @@
 # -*- coding: utf-8 -*-
 
 """
-Text insertion into focused applications using pywinauto
+Text insertion into focused applications using multiple methods
 """
 
 import logging
 import time
-from typing import Optional, Dict, Any, Tuple
+import sys
+import ctypes
+from typing import Optional, Dict, Any, Tuple, List
 import win32gui
 import win32api
 import win32con
+import win32clipboard
 import pywinauto
 from pywinauto import Desktop
 from pywinauto.application import Application
+from pywinauto.keyboard import send_keys
 
 
 class TextInserter:
     """
-    Handles detecting the focused text box and inserting text
+    Handles detecting the focused text box and inserting text using multiple methods
     """
     
     def __init__(self):
@@ -26,85 +30,150 @@ class TextInserter:
         self.logger = logging.getLogger(__name__)
         self.logger.info("TextInserter initialized")
         self.last_active_element = None
+        self.last_insertion_method = None
+        self.insertion_stats = {
+            "type_keys": {"attempts": 0, "successes": 0},
+            "set_text": {"attempts": 0, "successes": 0},
+            "clipboard": {"attempts": 0, "successes": 0},
+            "char_by_char": {"attempts": 0, "successes": 0},
+            "direct_input": {"attempts": 0, "successes": 0},
+            "win32_input": {"attempts": 0, "successes": 0}
+        }
     
     def get_focused_element(self) -> Optional[Dict[str, Any]]:
         """
-        Get information about the currently focused UI element
+        Get the currently focused element for text insertion
         
         Returns:
             Optional[Dict[str, Any]]: Information about the focused element, or None if not found
         """
         try:
-            # Get handle of the foreground window
+            # Get foreground window
             hwnd = win32gui.GetForegroundWindow()
-            if not hwnd:
-                self.logger.warning("No foreground window found")
-                return None
-                
-            # Get the window class and text
-            window_class = win32gui.GetClassName(hwnd)
+            
+            # Get window title and class
             window_text = win32gui.GetWindowText(hwnd)
+            window_class = win32gui.GetClassName(hwnd)
             
             self.logger.info(f"Focused window: {window_text} (Class: {window_class})")
             
-            # Try to connect to the window with pywinauto
+            # Skip if no window is focused
+            if not hwnd or not window_text:
+                self.logger.warning("No foreground window detected")
+                return None
+            
+            # First try to get the focused element using pywinauto
             try:
-                app = Application(backend="uia").connect(handle=hwnd)
-                window = app.window(handle=hwnd)
+                app = Desktop(backend="uia").connect(handle=hwnd)
+                element = app.get_focus()
                 
-                # Get the control that has focus
-                try:
-                    focused_element = window.get_focus()
-                    control_type = getattr(focused_element, "control_type", "unknown")
-                    
-                    # Check if this is likely to be an editable control
-                    editable = self._is_likely_editable(focused_element, control_type)
-                    
-                    element_info = {
-                        "app": window_text,
-                        "element": focused_element,
-                        "editable": editable,
-                        "control_type": control_type,
-                        "hwnd": hwnd
-                    }
-                    
-                    self.last_active_element = element_info
-                    return element_info
-                except (pywinauto.findwindows.ElementNotFoundError, 
-                        AttributeError, RuntimeError) as e:
-                    self.logger.warning(f"Could not get focused element: {str(e)}")
-            except (pywinauto.application.AppStartError, 
-                    pywinauto.findwindows.ElementNotFoundError) as e:
-                self.logger.warning(f"Could not connect to application: {str(e)}")
-                
-            # Fallback method: try Desktop().from_point
-            try:
-                # Get cursor position
-                cursor_pos = win32gui.GetCursorPos()
-                x, y = cursor_pos
-                element = Desktop(backend="uia").from_point(x, y)
+                # Check if likely editable
                 control_type = getattr(element, "control_type", "unknown")
-                
-                # Check if this is likely to be an editable control
                 editable = self._is_likely_editable(element, control_type)
                 
                 element_info = {
                     "app": window_text,
+                    "app_class": window_class,
                     "element": element,
                     "editable": editable,
                     "control_type": control_type,
                     "hwnd": hwnd
                 }
                 
+                self.logger.info(f"Found focused element in {window_text}, control type: {control_type}, editable: {editable}")
                 self.last_active_element = element_info
                 return element_info
-            except Exception as e:
-                self.logger.warning(f"Fallback method failed: {str(e)}")
                 
-            return None
+            except Exception as e:
+                self.logger.info(f"Could not get focused element with pywinauto: {str(e)}")
+            
+            # Fallback: use cursor position
+            try:
+                cursor_pos = win32gui.GetCursorPos()
+                x, y = cursor_pos
+                
+                # Get window at cursor position
+                hwnd_at_cursor = win32gui.WindowFromPoint(cursor_pos)
+                window_text_at_cursor = win32gui.GetWindowText(hwnd_at_cursor)
+                
+                # Try to get element at cursor position
+                try:
+                    element = Desktop(backend="uia").from_point(x, y)
+                    control_type = getattr(element, "control_type", "unknown")
+                    editable = self._is_likely_editable(element, control_type)
+                except Exception:
+                    element = None
+                    control_type = "unknown"
+                    # Consider it editable if it's a known text editor window
+                    editable = self._is_known_text_editor(window_text_at_cursor, win32gui.GetClassName(hwnd_at_cursor))
+                
+                element_info = {
+                    "app": window_text_at_cursor,
+                    "app_class": win32gui.GetClassName(hwnd_at_cursor),
+                    "element": element,
+                    "editable": editable,
+                    "control_type": control_type,
+                    "hwnd": hwnd_at_cursor,
+                    "cursor_pos": cursor_pos
+                }
+                
+                self.logger.info(f"Found element at cursor in {window_text_at_cursor}, editable: {editable}")
+                self.last_active_element = element_info
+                return element_info
+                
+            except Exception as e:
+                self.logger.info(f"Could not get element at cursor: {str(e)}")
+            
+            # Last resort: just use the foreground window
+            element_info = {
+                "app": window_text,
+                "app_class": window_class,
+                "element": None,
+                "editable": self._is_known_text_editor(window_text, window_class),
+                "control_type": "window",
+                "hwnd": hwnd
+            }
+            
+            self.logger.info(f"Using foreground window fallback: {window_text}, assuming editable: {element_info['editable']}")
+            self.last_active_element = element_info
+            return element_info
+            
         except Exception as e:
             self.logger.error(f"Error getting focused element: {str(e)}")
             return None
+    
+    def _is_known_text_editor(self, window_title: str, window_class: str) -> bool:
+        """Check if window is a known text editor based on title or class"""
+        # Known text editor window classes
+        editor_classes = [
+            "Notepad", "TextEditorWindow", "RICHEDIT", "EDIT", 
+            "Chrome_RenderWidgetHostHWND", "MozillaWindowClass",
+            "OpusApp", "EXCEL", "bosa_sdm", "CabinetWClass"
+        ]
+        
+        # Known text editor window title keywords
+        editor_keywords = [
+            "notepad", "word", "editor", "text", "document", "excel", 
+            "code", "visual studio", "vscode", "sublime", "atom", 
+            "chrome", "firefox", "edge", "safari", "browser",
+            "obsidian", "evernote", "onenote", "slack", "discord",
+            "terminal", "powershell", "command", "prompt"
+        ]
+        
+        # Check class
+        if any(cls.lower() in window_class.lower() for cls in editor_classes):
+            return True
+            
+        # Check title
+        if any(kw.lower() in window_title.lower() for kw in editor_keywords):
+            return True
+            
+        # Check for file extensions in title that suggest text editing
+        file_extensions = [".txt", ".md", ".py", ".js", ".html", ".css", ".c", ".cpp", ".java", ".json", ".xml", ".csv"]
+        if any(ext in window_title for ext in file_extensions):
+            return True
+            
+        return False
             
     def _is_likely_editable(self, element, control_type: str) -> bool:
         """
@@ -117,88 +186,40 @@ class TextInserter:
         Returns:
             bool: Whether the element is likely to be editable
         """
-        # For testing/debugging purposes, make Cursor editor always editable
-        hwnd = win32gui.GetForegroundWindow()
-        window_text = win32gui.GetWindowText(hwnd)
-        if "Cursor" in window_text:
-            self.logger.info("Detected Cursor editor - treating as editable")
-            return True
-            
         # List of control types that are typically editable
-        editable_types = ["Edit", "Document", "Text", "DataItem", "edit", "document", "text"]
+        editable_types = [
+            "Edit", "Document", "Text", "DataItem", "edit", "document", 
+            "text", "RichEdit", "RICHEDIT", "TextBox", "Editable"
+        ]
         
         # Check control type
-        if control_type and control_type.lower() in [t.lower() for t in editable_types]:
+        if control_type and any(t.lower() in control_type.lower() for t in editable_types):
             self.logger.info(f"Control type {control_type} is likely editable")
             return True
             
-        # Check for common editor window classes
+        # Check element properties if available
         try:
-            if hasattr(element, "class_name"):
-                class_name = element.class_name()
-                common_editor_classes = [
-                    "Edit", "RichEdit", "RichEdit20", "TextBox",
-                    "RICHEDIT50W", "Chrome_RenderWidgetHostHWND"
-                ]
-                if any(cls.lower() in class_name.lower() for cls in common_editor_classes):
-                    self.logger.info(f"Element class {class_name} is likely editable")
-                    return True
-        except Exception as e:
-            self.logger.debug(f"Error checking class name: {str(e)}")
-            
-        # Check window title for common editor applications
-        try:
-            editor_keywords = ["notepad", "word", "editor", "text", "document", "code"]
-            if any(keyword in window_text.lower() for keyword in editor_keywords):
-                self.logger.info(f"Window title contains editor keyword: {window_text}")
-                return True
-        except Exception as e:
-            self.logger.debug(f"Error checking window title: {str(e)}")
-        
-        # Try more intensive checks
-        try:
-            # Check if it has an editable pattern
+            # Check if it has editable pattern
             if hasattr(element, "is_editable") and element.is_editable():
-                self.logger.info("Element has editable pattern")
+                return True
+                
+            # Check if it can be typed into
+            if hasattr(element, "can_type_keys") and element.can_type_keys():
                 return True
                 
             # Check if it has a value pattern
             if hasattr(element, "get_value") and hasattr(element, "set_value"):
-                self.logger.info("Element has value pattern")
                 return True
                 
             # Check if it has a text pattern
             if hasattr(element, "get_text") and callable(getattr(element, "get_text", None)):
-                self.logger.info("Element has text pattern")
                 return True
                 
-            # Check if it's a generic keyboard-focusable element
+            # Check if keyboard focusable
             if hasattr(element, "has_keyboard_focus") and element.has_keyboard_focus():
-                self.logger.info("Element has keyboard focus")
                 return True
-        except Exception as e:
-            self.logger.debug(f"Error checking element patterns: {str(e)}")
-            
-        # Check element properties if available
-        try:
-            if hasattr(element, "get_properties"):
-                properties = element.get_properties()
-                if "editable" in properties and properties["editable"]:
-                    self.logger.info("Element property 'editable' is True")
-                    return True
-                if "is_content_element" in properties and properties["is_content_element"]:
-                    self.logger.info("Element is a content element")
-                    return True
-                if "has_keyboard_focus" in properties and properties["has_keyboard_focus"]:
-                    self.logger.info("Element has keyboard focus property")
-                    return True
-        except Exception as e:
-            self.logger.debug(f"Error checking element properties: {str(e)}")
-            
-        # Final fallback: just try to insert text anyway if the window title suggests a text editor
-        if any(term in window_text.lower() for term in [".txt", ".py", ".md", ".js", ".html", ".css", ".java"]):
-            self.logger.info(f"Window appears to be a code or text editor: {window_text}")
-            return True
+        except Exception:
+            pass
             
         return False
     
@@ -218,7 +239,7 @@ class TextInserter:
     
     def insert_text(self, text: str, trace_id: str = None) -> bool:
         """
-        Insert text into the focused element
+        Insert text into the focused element using multiple methods
         
         Args:
             text: Text to insert
@@ -238,171 +259,187 @@ class TextInserter:
         start_time = time.time()
         self.logger.info(f"[TRACE:{trace_id}] Starting text insertion ({len(text)} chars)")
         
-        try:
-            # Get focused element
-            element_check_start = time.time()
-            self.logger.info(f"[TRACE:{trace_id}] Getting focused element")
-            element_info = self.get_focused_element()
-            if not element_info:
-                self.logger.warning(f"[TRACE:{trace_id}] No focused element found for text insertion")
-                return False
-                
-            if not element_info["editable"]:
-                self.logger.warning(f"[TRACE:{trace_id}] Focused element is not editable")
-                return False
-                
-            element = element_info["element"]
-            hwnd = element_info["hwnd"]
-            app_name = element_info["app"]
+        # Get focused element
+        element_info = self.get_focused_element()
+        if not element_info:
+            self.logger.warning(f"[TRACE:{trace_id}] No focused element found for text insertion")
+            return False
+        
+        # Ensure window is in foreground before attempting insertion
+        hwnd = element_info["hwnd"]
+        self._ensure_foreground_window(hwnd)
+        
+        # Method 1: Try direct clipboard method (most reliable)
+        result = self._insert_via_clipboard(text, trace_id)
+        if result:
+            self.last_insertion_method = "clipboard"
+            return True
             
-            element_check_time = time.time() - element_check_start
-            self.logger.info(f"[TRACE:{trace_id}] Found editable element in '{app_name}' in {element_check_time:.3f}s")
-            
-            # Method 1: Try to use the element's type_keys method
-            method1_start = time.time()
-            self.logger.info(f"[TRACE:{trace_id}] Attempting insertion method 1: type_keys")
-            try:
-                element.type_keys(text, with_spaces=True, with_tabs=True, with_newlines=True)
-                method1_time = time.time() - method1_start
-                self.logger.info(f"[TRACE:{trace_id}] Text successfully inserted using type_keys in {method1_time:.3f}s")
+        # Method 2: Try PyWinAuto element methods if we have a valid element
+        if element_info["element"] is not None:
+            result = self._insert_via_element(element_info["element"], text, trace_id)
+            if result:
+                self.last_insertion_method = "element"
                 return True
-            except Exception as e:
-                method1_time = time.time() - method1_start
-                self.logger.warning(f"[TRACE:{trace_id}] Failed to insert text with type_keys after {method1_time:.3f}s: {str(e)}")
+        
+        # Method 3: Try direct input simulation
+        result = self._insert_via_direct_input(text, trace_id)
+        if result:
+            self.last_insertion_method = "direct_input"
+            return True
+            
+        # Method 4: Try character-by-character as last resort
+        result = self._insert_via_char_by_char(text, trace_id)
+        if result:
+            self.last_insertion_method = "char_by_char"
+            return True
+        
+        # If we get here, all methods failed
+        total_time = time.time() - start_time
+        self.logger.error(f"[TRACE:{trace_id}] All text insertion methods failed after {total_time:.3f}s")
+        return False
+    
+    def _ensure_foreground_window(self, hwnd: int) -> bool:
+        """Ensure the window is in the foreground before insertion"""
+        try:
+            # Check if already foreground
+            if win32gui.GetForegroundWindow() == hwnd:
+                return True
                 
-            # Method 2: Try to set_text directly if the element supports it
-            method2_start = time.time()
-            self.logger.info(f"[TRACE:{trace_id}] Attempting insertion method 2: set_text")
+            # Try to bring window to foreground
+            win32gui.SetForegroundWindow(hwnd)
+            
+            # Small delay to ensure window activation
+            time.sleep(0.1)
+            
+            return win32gui.GetForegroundWindow() == hwnd
+        except Exception as e:
+            self.logger.warning(f"Failed to bring window to foreground: {str(e)}")
+            return False
+    
+    def _insert_via_element(self, element, text: str, trace_id: str) -> bool:
+        """Try to insert text using pywinauto element methods"""
+        # Method 2a: Try type_keys
+        self.insertion_stats["type_keys"]["attempts"] += 1
+        try:
+            if hasattr(element, "type_keys") and callable(getattr(element, "type_keys", None)):
+                element.type_keys(text, with_spaces=True, with_tabs=True, with_newlines=True)
+                self.logger.info(f"[TRACE:{trace_id}] Text successfully inserted using type_keys")
+                self.insertion_stats["type_keys"]["successes"] += 1
+                return True
+        except Exception as e:
+            self.logger.info(f"[TRACE:{trace_id}] Failed to insert text with type_keys: {str(e)}")
+        
+        # Method 2b: Try set_text
+        self.insertion_stats["set_text"]["attempts"] += 1
+        try:
+            if hasattr(element, "set_text") and callable(getattr(element, "set_text", None)):
+                element.set_text(text)
+                self.logger.info(f"[TRACE:{trace_id}] Text successfully inserted using set_text")
+                self.insertion_stats["set_text"]["successes"] += 1
+                return True
+        except Exception as e:
+            self.logger.info(f"[TRACE:{trace_id}] Failed to insert text with set_text: {str(e)}")
+            
+        return False
+    
+    def _insert_via_clipboard(self, text: str, trace_id: str) -> bool:
+        """Insert text using clipboard (copy/paste)"""
+        self.insertion_stats["clipboard"]["attempts"] += 1
+        
+        try:
+            # Remember original clipboard content
+            original_clipboard = None
             try:
-                if hasattr(element, "set_text") and callable(getattr(element, "set_text", None)):
-                    element.set_text(text)
-                    method2_time = time.time() - method2_start
-                    self.logger.info(f"[TRACE:{trace_id}] Text successfully inserted using set_text in {method2_time:.3f}s")
-                    return True
-                else:
-                    self.logger.info(f"[TRACE:{trace_id}] Element does not support set_text method")
-            except Exception as e:
-                method2_time = time.time() - method2_start
-                self.logger.warning(f"[TRACE:{trace_id}] Failed to insert text with set_text after {method2_time:.3f}s: {str(e)}")
-                
-            # Method 3: Try clipboard approach
-            method3_start = time.time()
-            self.logger.info(f"[TRACE:{trace_id}] Attempting insertion method 3: clipboard")
-            try:
-                # Initialize COM for clipboard operations on Windows
-                com_init_start = time.time()
-                try:
-                    # Make sure we properly import and initialize COM
-                    import pythoncom
-                    # Force COM initialization even if it's already initialized
-                    # This addresses the "CoInitialize has not been called" error
-                    try:
-                        pythoncom.CoUninitialize()  # Clean any previous state
-                    except:
-                        pass
-                    pythoncom.CoInitialize()  # Initialize fresh
-                    com_initialized = True
-                    com_init_time = time.time() - com_init_start
-                    self.logger.info(f"[TRACE:{trace_id}] COM initialized in {com_init_time:.3f}s")
-                except (ImportError, Exception) as e:
-                    self.logger.warning(f"[TRACE:{trace_id}] Could not initialize COM: {str(e)}")
-                    com_initialized = False
-                
-                # Remember original clipboard content
-                clipboard_start = time.time()
-                import win32clipboard
                 win32clipboard.OpenClipboard()
                 try:
                     original_clipboard = win32clipboard.GetClipboardData(win32clipboard.CF_UNICODETEXT)
-                    self.logger.info(f"[TRACE:{trace_id}] Original clipboard content saved")
-                except:
-                    original_clipboard = None
-                    self.logger.info(f"[TRACE:{trace_id}] No original clipboard content to save")
+                except (TypeError, win32clipboard.error):
+                    pass
                 win32clipboard.EmptyClipboard()
-                win32clipboard.SetClipboardText(text)
+                win32clipboard.SetClipboardText(text, win32clipboard.CF_UNICODETEXT)
                 win32clipboard.CloseClipboard()
-                clipboard_time = time.time() - clipboard_start
-                self.logger.info(f"[TRACE:{trace_id}] Clipboard prepared in {clipboard_time:.3f}s")
-                
-                # Make sure the window is in the foreground
-                focus_start = time.time()
-                win32gui.SetForegroundWindow(hwnd)
-                time.sleep(0.1)  # Small delay to ensure window activation
-                focus_time = time.time() - focus_start
-                self.logger.info(f"[TRACE:{trace_id}] Window focused in {focus_time:.3f}s")
-                
-                # Send Ctrl+V to paste
-                paste_start = time.time()
-                pywinauto.keyboard.send_keys('^v')
-                time.sleep(0.1)  # Reduced from 0.2 to 0.1 to improve performance
-                paste_time = time.time() - paste_start
-                self.logger.info(f"[TRACE:{trace_id}] Paste command sent in {paste_time:.3f}s")
-                
-                # Restore original clipboard if there was one
-                restore_start = time.time()
-                if original_clipboard:
+            except Exception as e:
+                self.logger.info(f"[TRACE:{trace_id}] Clipboard preparation failed: {str(e)}")
+                try:
+                    win32clipboard.CloseClipboard()
+                except:
+                    pass
+                return False
+            
+            # Send Ctrl+V to paste
+            time.sleep(0.05)  # Small delay
+            send_keys('^v')  # Ctrl+V
+            time.sleep(0.05)  # Wait for paste to complete
+            
+            # Restore original clipboard content if there was one
+            if original_clipboard:
+                try:
                     win32clipboard.OpenClipboard()
                     win32clipboard.EmptyClipboard()
-                    win32clipboard.SetClipboardText(original_clipboard)
+                    win32clipboard.SetClipboardText(original_clipboard, win32clipboard.CF_UNICODETEXT)
                     win32clipboard.CloseClipboard()
-                    self.logger.info(f"[TRACE:{trace_id}] Original clipboard content restored")
-                restore_time = time.time() - restore_start
-                
-                method3_time = time.time() - method3_start
-                self.logger.info(f"[TRACE:{trace_id}] Text inserted using clipboard in {method3_time:.3f}s")
-                
-                # Uninitialize COM if we initialized it
-                if com_initialized:
+                except:
                     try:
-                        pythoncom.CoUninitialize()
-                        self.logger.info(f"[TRACE:{trace_id}] COM uninitialized")
-                    except Exception:
+                        win32clipboard.CloseClipboard()
+                    except:
                         pass
-                
-                return True
-            except Exception as e:
-                # Uninitialize COM if we initialized it
-                if 'com_initialized' in locals() and com_initialized:
-                    try:
-                        import pythoncom
-                        pythoncom.CoUninitialize()
-                        self.logger.info(f"[TRACE:{trace_id}] COM uninitialized after error")
-                    except Exception:
-                        pass
-                
-                method3_time = time.time() - method3_start
-                self.logger.warning(f"[TRACE:{trace_id}] Failed to insert text with clipboard after {method3_time:.3f}s: {str(e)}")
-                
-            # Method 4: Fallback to character-by-character keypress simulation
-            method4_start = time.time()
-            self.logger.info(f"[TRACE:{trace_id}] Attempting insertion method 4: character-by-character")
-            try:
-                # Make sure the window is in the foreground
-                win32gui.SetForegroundWindow(hwnd)
-                time.sleep(0.1)  # Small delay to ensure window activation
-                
-                # Simulate keystrokes for the text
-                for char in text:
-                    if char == '\n':
-                        pywinauto.keyboard.send_keys('{ENTER}')
-                    elif char == '\t':
-                        pywinauto.keyboard.send_keys('{TAB}')
-                    else:
-                        pywinauto.keyboard.send_keys(char, with_spaces=True)
-                    time.sleep(0.01)  # Small delay between keystrokes
-                
-                method4_time = time.time() - method4_start
-                self.logger.info(f"[TRACE:{trace_id}] Text inserted character-by-character in {method4_time:.3f}s")
-                return True
-            except Exception as e:
-                method4_time = time.time() - method4_start
-                self.logger.error(f"[TRACE:{trace_id}] Failed to insert text with character-by-character input after {method4_time:.3f}s: {str(e)}")
             
-            total_time = time.time() - start_time
-            self.logger.error(f"[TRACE:{trace_id}] All text insertion methods failed after {total_time:.3f}s")
-            return False
+            self.logger.info(f"[TRACE:{trace_id}] Text inserted using clipboard method")
+            self.insertion_stats["clipboard"]["successes"] += 1
+            return True
             
         except Exception as e:
-            total_time = time.time() - start_time
-            self.logger.error(f"[TRACE:{trace_id}] Error inserting text after {total_time:.3f}s: {str(e)}")
-            return False 
+            self.logger.info(f"[TRACE:{trace_id}] Failed to insert text with clipboard: {str(e)}")
+            try:
+                win32clipboard.CloseClipboard()
+            except:
+                pass
+            return False
+    
+    def _insert_via_direct_input(self, text: str, trace_id: str) -> bool:
+        """Insert text using direct input simulation"""
+        self.insertion_stats["direct_input"]["attempts"] += 1
+        
+        try:
+            # Send raw text as keystrokes (send_keys can handle larger chunks)
+            sanitized_text = text.replace('^', '{^}').replace('%', '{%}').replace('+', '{+}').replace('~', '{~}')
+            send_keys(sanitized_text, pause=0.01)
+            
+            self.logger.info(f"[TRACE:{trace_id}] Text inserted using direct input")
+            self.insertion_stats["direct_input"]["successes"] += 1
+            return True
+            
+        except Exception as e:
+            self.logger.info(f"[TRACE:{trace_id}] Failed to insert text with direct input: {str(e)}")
+            return False
+    
+    def _insert_via_char_by_char(self, text: str, trace_id: str) -> bool:
+        """Insert text character by character as last resort"""
+        self.insertion_stats["char_by_char"]["attempts"] += 1
+        
+        try:
+            # Simulate keystrokes for the text one character at a time
+            for char in text:
+                if char == '\n':
+                    send_keys('{ENTER}')
+                elif char == '\t':
+                    send_keys('{TAB}')
+                else:
+                    sanitized_char = char
+                    if char in '^%+~()[]{}':
+                        sanitized_char = '{' + char + '}'
+                    send_keys(sanitized_char)
+                time.sleep(0.01)  # Small delay between keystrokes
+            
+            self.logger.info(f"[TRACE:{trace_id}] Text inserted character-by-character")
+            self.insertion_stats["char_by_char"]["successes"] += 1
+            return True
+            
+        except Exception as e:
+            self.logger.info(f"[TRACE:{trace_id}] Failed to insert text character-by-character: {str(e)}")
+            return False
+    
+    def get_insertion_stats(self) -> Dict[str, Dict[str, int]]:
+        """Get statistics about which insertion methods have been successful"""
+        return self.insertion_stats 

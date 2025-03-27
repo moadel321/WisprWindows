@@ -86,6 +86,11 @@ class VADProcessor:
         
         self.logger.info(f"VADProcessor initialized (sample_rate={sample_rate}, threshold={vad_threshold})")
     
+    @property
+    def is_processing(self) -> bool:
+        """Check if the VAD processor is currently running"""
+        return self.processing_thread is not None and self.processing_thread.is_alive()
+    
     def start_processing(self) -> bool:
         """
         Start the VAD processing thread
@@ -132,25 +137,48 @@ class VADProcessor:
         Returns:
             bool: Whether processing was successfully stopped
         """
-        if not self.processing_thread:
-            return True  # Already stopped
-        
-        # Signal thread to stop
-        self.stop_event.set()
-        
-        # Wait for thread to finish
-        if self.processing_thread.is_alive():
-            self.processing_thread.join(timeout=2.0)
-        
-        # Reset thread
-        self.processing_thread = None
-        
-        # End any active speech segment
-        if self.is_speech_active:
-            self._handle_speech_end()
-        
-        self.logger.info("VAD processing stopped")
-        return True
+        try:
+            if not self.processing_thread:
+                return True  # Already stopped
+            
+            # Signal thread to stop
+            self.stop_event.set()
+            
+            # Wait for thread to finish with timeout
+            if self.processing_thread.is_alive():
+                self.processing_thread.join(timeout=2.0)
+                
+                # If thread is still alive after timeout, log a warning
+                if self.processing_thread.is_alive():
+                    self.logger.warning("VAD processing thread did not terminate within timeout")
+                    # We'll still consider this successful since we set the stop event
+            
+            # End any active speech segment
+            if self.is_speech_active:
+                try:
+                    self._handle_speech_end()
+                except Exception as e:
+                    self.logger.error(f"Error ending active speech segment: {str(e)}")
+            
+            # Clear the processing queue
+            while not self.processing_queue.empty():
+                try:
+                    self.processing_queue.get_nowait()
+                    self.processing_queue.task_done()
+                except queue.Empty:
+                    break
+            
+            # Reset thread reference
+            self.processing_thread = None
+            
+            self.logger.info("VAD processing stopped")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error stopping VAD processing: {str(e)}")
+            # Reset thread reference even if there was an error
+            self.processing_thread = None
+            return False
     
     def process_audio(self, audio_data: np.ndarray, time_info: Optional[Dict] = None) -> bool:
         """

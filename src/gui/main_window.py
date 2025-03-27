@@ -313,16 +313,16 @@ class MainWindow(QMainWindow):
         
         # Create history controls
         history_controls = QHBoxLayout()
-        history_controls.setContentsMargins(0, 10, 0, 0)
+        # history_controls.setContentsMargins(0, 10, 0, 0)
         
         self.clear_history_button = QPushButton("Clear History")
         self.clear_history_button.clicked.connect(self._on_clear_history_clicked)
-        history_controls.addWidget(self.clear_history_button)
+        # history_controls.addWidget(self.clear_history_button)
         
         # Add export button
         self.export_history_button = QPushButton("Export History")
-        self.export_history_button.clicked.connect(self._on_export_history_clicked)
-        history_controls.addWidget(self.export_history_button)
+        # self.export_history_button.clicked.connect(self._on_export_history_clicked)
+        # history_controls.addWidget(self.export_history_button)
         
         history_controls.addStretch(1)
         
