@@ -54,6 +54,10 @@ class MainWindow(QMainWindow):
         self.error_signal.connect(self._update_error_log)
         self.model_status_signal.connect(self._update_model_status)
         
+        # UI state tracking
+        self.is_minified = False
+        self.previous_geometry = None
+        
         # Setup window properties
         self.setWindowTitle("Speech-to-Text Tool")
         self.setMinimumSize(800, 600)
@@ -81,6 +85,9 @@ class MainWindow(QMainWindow):
         
         # Check microphone permission
         QTimer.singleShot(500, self._check_permission)
+        
+        # Start in minified mode by default
+        QTimer.singleShot(100, self._toggle_minified_mode)
         
         self.logger.info("Main window initialized")
     
@@ -189,17 +196,17 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central_widget)
         
         # Main layout
-        main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(10)
+        self.main_layout = QVBoxLayout(central_widget)
+        self.main_layout.setContentsMargins(10, 10, 10, 10)
+        self.main_layout.setSpacing(10)
         
         # Create top bar with controls
         top_bar = QHBoxLayout()
         top_bar.setSpacing(10)
         
         # Create a grouped box for controls
-        controls_group = QGroupBox("Controls")
-        controls_layout = QHBoxLayout(controls_group)
+        self.controls_group = QGroupBox("Controls")
+        controls_layout = QHBoxLayout(self.controls_group)
         
         # Microphone selection
         mic_label = QLabel("Microphone:")
@@ -232,11 +239,11 @@ class MainWindow(QMainWindow):
         controls_layout.addWidget(self.stop_button)
         
         # Add to top bar
-        top_bar.addWidget(controls_group)
+        top_bar.addWidget(self.controls_group)
         
         # Create status group
-        status_group = QGroupBox("Status")
-        status_layout = QHBoxLayout(status_group)
+        self.status_group = QGroupBox("Status")
+        status_layout = QHBoxLayout(self.status_group)
         
         # Status indicators
         self.recording_indicator = QLabel("●")
@@ -263,16 +270,23 @@ class MainWindow(QMainWindow):
         status_layout.addWidget(self.model_info_button)
         
         # Add status group to top bar
-        top_bar.addWidget(status_group)
+        top_bar.addWidget(self.status_group)
+        
+        # Add maximize/minify button for switching modes
+        self.toggle_mode_button = QPushButton("Minify")
+        self.toggle_mode_button.setIcon(QIcon.fromTheme("view-restore"))
+        self.toggle_mode_button.clicked.connect(self._toggle_minified_mode)
+        self.toggle_mode_button.setToolTip("Switch to compact mode (Ctrl+M)")
+        top_bar.addWidget(self.toggle_mode_button)
         
         # Add instruction labels
-        self.continuous_instruction_label = QLabel("🎤 Press F5 to start listening and F6 to stop")
+        self.continuous_instruction_label = QLabel("🎤 CONTINUOUS MODE: Click 'Start Listening', speak naturally, and pause between sentences. Speech will be transcribed automatically after each pause.")
         self.continuous_instruction_label.setStyleSheet("color: #4CAF50; padding: 5px; background-color: #2A2A2A; border-radius: 3px;")
         self.continuous_instruction_label.setWordWrap(True)
-        main_layout.addWidget(self.continuous_instruction_label)
+        self.main_layout.addWidget(self.continuous_instruction_label)
         
         # Add to main layout
-        main_layout.addLayout(top_bar)
+        self.main_layout.addLayout(top_bar)
         
         # Create tabs for transcription and logs
         self.tabs = QTabWidget()
@@ -353,7 +367,7 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(vad_tab, "VAD Info")
         
         # Add to main layout
-        main_layout.addWidget(self.tabs)
+        self.main_layout.addWidget(self.tabs)
         
         # Create status bar
         status_bar = QStatusBar()
@@ -393,6 +407,14 @@ class MainWindow(QMainWindow):
         
         file_menu.addSeparator()
         
+        # Minify action
+        minify_action = QAction("Minify Window", self)
+        minify_action.triggered.connect(self._toggle_minified_mode)
+        minify_action.setShortcut("Ctrl+M")
+        file_menu.addAction(minify_action)
+        
+        file_menu.addSeparator()
+        
         # Export history action
         export_action = QAction("Export Transcription History...", self)
         export_action.triggered.connect(self._on_export_history_clicked)
@@ -419,7 +441,7 @@ class MainWindow(QMainWindow):
         exit_action.triggered.connect(self.close)
         exit_action.setShortcut("Alt+F4")
         file_menu.addAction(exit_action)
-    
+        
     def _setup_shortcuts(self):
         """Set up global keyboard shortcuts for main functionality"""
         # Import locally to ensure we have the right version
@@ -592,6 +614,10 @@ class MainWindow(QMainWindow):
                 self.start_button.setText("Start Listening")
             else:
                 self.start_button.setText("Request Permission")
+        
+        # If in minified mode, update the minified stop button state
+        if self.is_minified and hasattr(self, 'minified_stop_button'):
+            self.minified_stop_button.setEnabled(True)
     
     def _on_stop_clicked(self):
         """Handle stop button click"""
@@ -613,6 +639,10 @@ class MainWindow(QMainWindow):
         else:
             self.logger.error("Failed to stop transcription")
             self._update_error_log("Failed to stop transcription.")
+        
+        # If in minified mode, update the minified stop button state
+        if self.is_minified and hasattr(self, 'minified_stop_button'):
+            self.minified_stop_button.setEnabled(True)
     
     def _on_clear_history_clicked(self):
         """Handle clear history button click"""
@@ -671,8 +701,14 @@ class MainWindow(QMainWindow):
         current_color = self.recording_indicator.styleSheet()
         if "red" in current_color:
             self.recording_indicator.setStyleSheet("color: rgba(255, 0, 0, 0.3); font-size: 16px;")
+            # Also update minified indicator if it exists
+            if hasattr(self, 'minified_indicator') and self.is_minified:
+                self.minified_indicator.setStyleSheet("color: rgba(255, 0, 0, 0.3); font-size: 20px;")
         else:
             self.recording_indicator.setStyleSheet("color: red; font-size: 16px;")
+            # Also update minified indicator if it exists
+            if hasattr(self, 'minified_indicator') and self.is_minified:
+                self.minified_indicator.setStyleSheet("color: red; font-size: 20px;")
     
     def _update_speech_indicator(self, is_speech):
         """Update the speech detection indicator"""
@@ -683,6 +719,10 @@ class MainWindow(QMainWindow):
             self.speech_indicator.setStyleSheet("color: green;")
             self.speech_indicator.setText("Speech: Active")
             
+            # Update minified indicator if it exists
+            if hasattr(self, 'minified_indicator') and self.is_minified:
+                self.minified_indicator.setStyleSheet("color: green; font-size: 20px;")
+            
             # Update VAD info
             self._update_vad_info("Speech detected", True)
         else:
@@ -691,6 +731,10 @@ class MainWindow(QMainWindow):
             self.status_label.setText("Listening...")
             self.speech_indicator.setStyleSheet("color: gray;")
             self.speech_indicator.setText("Speech: Inactive")
+            
+            # Update minified indicator if it exists
+            if hasattr(self, 'minified_indicator') and self.is_minified:
+                self.minified_indicator.setStyleSheet("color: red; font-size: 20px;")
             
             # Update VAD info
             self._update_vad_info("No speech detected", False)
@@ -1039,8 +1083,8 @@ class MainWindow(QMainWindow):
         # Get the item at the position
         item = self.history_list.itemAt(position)
         if not item:
-            return
-            
+                return
+                
         # Create context menu
         context_menu = QMenu()
         copy_action = context_menu.addAction("Copy")
@@ -1097,4 +1141,193 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.logger.error(f"Error copying to clipboard: {str(e)}")
             status_bar = self.statusBar()
-            status_bar.showMessage("Failed to copy text", 1500) 
+            status_bar.showMessage("Failed to copy text", 1500)
+    
+    def _toggle_minified_mode(self):
+        """Toggle between normal and minified UI modes"""
+        if not self.is_minified:
+            # Save current geometry for restoration later
+            self.previous_geometry = self.geometry()
+            
+            # Switch to minified mode
+            self.is_minified = True
+            
+            # Hide main UI elements
+            self.continuous_instruction_label.hide()
+            self.tabs.hide()
+            self.status_group.hide()
+            self.mic_combo.hide()
+            
+            # Hide the original controls group and create a more compact one
+            self.controls_group.hide()
+            
+            # Remove status bar information
+            self.statusBar().clearMessage()
+            self.vad_status_label.hide()
+            self.text_insertion_status.hide()
+            
+            # Create a dedicated compact layout for minified mode
+            compact_layout = QHBoxLayout()
+            compact_layout.setContentsMargins(10, 10, 10, 10)
+            compact_layout.setSpacing(10)
+            
+            # Clone essential buttons with larger, more visible style
+            minified_start_button = QPushButton("Start")
+            minified_start_button.setIcon(QIcon.fromTheme("media-record"))
+            minified_start_button.clicked.connect(self._on_start_clicked)
+            minified_start_button.setStyleSheet("""
+                QPushButton {
+                    background-color: #3d3d3d;
+                    border: 1px solid #5d5d5d;
+                    border-radius: 4px;
+                    padding: 8px 12px;
+                    color: #e0e0e0;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #4d4d4d;
+                }
+            """)
+            minified_start_button.setMinimumWidth(80)
+            compact_layout.addWidget(minified_start_button)
+            self.minified_start_button = minified_start_button
+            
+            minified_stop_button = QPushButton("Stop")
+            minified_stop_button.setIcon(QIcon.fromTheme("media-playback-stop"))
+            minified_stop_button.clicked.connect(self._on_stop_clicked)
+            minified_stop_button.setEnabled(self.stop_button.isEnabled())
+            minified_stop_button.setStyleSheet("""
+                QPushButton {
+                    background-color: #3d3d3d;
+                    border: 1px solid #5d5d5d;
+                    border-radius: 4px;
+                    padding: 8px 12px;
+                    color: #e0e0e0;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #4d4d4d;
+                }
+            """)
+            minified_stop_button.setMinimumWidth(80)
+            compact_layout.addWidget(minified_stop_button)
+            self.minified_stop_button = minified_stop_button
+            
+            # Add recording indicator to minified view
+            minified_indicator = QLabel("●")
+            minified_indicator.setStyleSheet("color: gray; font-size: 20px;")
+            minified_indicator.setFixedWidth(20)
+            compact_layout.addWidget(minified_indicator)
+            self.minified_indicator = minified_indicator
+            
+            compact_layout.addStretch(1)
+            
+            # Change the toggle button text and style
+            self.toggle_mode_button.setText("Maximize")
+            self.toggle_mode_button.setToolTip("Switch back to full interface")
+            self.toggle_mode_button.setStyleSheet("""
+                QPushButton {
+                    background-color: #3d3d3d;
+                    border: 1px solid #5d5d5d;
+                    border-radius: 4px;
+                    padding: 8px 12px;
+                    color: #e0e0e0;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #4d4d4d;
+                }
+            """)
+            
+            compact_layout.addWidget(self.toggle_mode_button)
+            
+            # Clear the main layout and add our compact layout
+            # First, remove all existing items from the main layout
+            while self.main_layout.count():
+                item = self.main_layout.takeAt(0)
+                if item.widget():
+                    item.widget().hide()
+            
+            # Add our compact layout
+            self.main_layout.addLayout(compact_layout)
+            
+            # Set always on top
+            self.setWindowFlags(self.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+            
+            # Make window smaller and resize to minimum with fixed size
+            self.setMinimumSize(350, 200)
+            self.setMaximumSize(1000, 200)  # Allow horizontal resize but fix height
+            self.resize(350, 200)
+            
+            # Position in the bottom right corner
+            screen_geometry = QApplication.primaryScreen().availableGeometry()
+            self.move(
+                screen_geometry.width() - 370,
+                screen_geometry.height() - 220
+            )
+            
+            self.logger.info("Switched to minified mode")
+        else:
+            # Switch back to normal mode
+            self.is_minified = False
+            
+            # Hide minified elements if they exist
+            if hasattr(self, 'minified_start_button'):
+                self.minified_start_button.hide()
+            if hasattr(self, 'minified_stop_button'):
+                self.minified_stop_button.hide()
+            if hasattr(self, 'minified_indicator'):
+                self.minified_indicator.hide()
+            
+            # Clear the layout again
+            while self.main_layout.count():
+                item = self.main_layout.takeAt(0)
+                if item.widget():
+                    item.widget().hide()
+                elif item.layout():
+                    # Clear any nested layouts
+                    while item.layout().count():
+                        nested_item = item.layout().takeAt(0)
+                        if nested_item.widget():
+                            nested_item.widget().hide()
+            
+            # Show all main UI elements again
+            self.continuous_instruction_label.show()
+            self.tabs.show()
+            self.status_group.show()
+            self.controls_group.show()
+            self.mic_combo.show()
+            
+            # Show status bar elements
+            self.vad_status_label.show()
+            self.text_insertion_status.show()
+            
+            # Change toggle button text and restore its style
+            self.toggle_mode_button.setText("Minify")
+            self.toggle_mode_button.setToolTip("Switch to compact mode (Ctrl+M)")
+            self.toggle_mode_button.setStyleSheet("")
+            
+            # Rebuild the original layout
+            top_bar = QHBoxLayout()
+            top_bar.setSpacing(10)
+            top_bar.addWidget(self.controls_group)
+            top_bar.addWidget(self.status_group)
+            top_bar.addWidget(self.toggle_mode_button)
+            
+            self.main_layout.addWidget(self.continuous_instruction_label)
+            self.main_layout.addLayout(top_bar)
+            self.main_layout.addWidget(self.tabs)
+            
+            # Remove always on top flag
+            self.setWindowFlags(self.windowFlags() & ~Qt.WindowType.WindowStaysOnTopHint)
+            
+            # Restore minimum size and previous geometry, removing height restriction
+            self.setMinimumSize(800, 600)
+            self.setMaximumSize(16777215, 16777215)  # Reset to Qt default maximum
+            if self.previous_geometry:
+                self.setGeometry(self.previous_geometry)
+            
+            self.logger.info("Switched to normal mode")
+        
+        # Need to show the window again after changing window flags
+        self.show() 
