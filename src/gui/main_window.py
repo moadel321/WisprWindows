@@ -10,10 +10,11 @@ from PyQt6.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, 
     QPushButton, QComboBox, QLabel, QTabWidget,
     QTextEdit, QStatusBar, QListWidget, QListWidgetItem,
-    QSplitter, QApplication, QMessageBox, QMenu, QMenuBar, QGroupBox
+    QSplitter, QApplication, QMessageBox, QMenu, QMenuBar, QGroupBox, QCheckBox
 )
 from PyQt6.QtCore import Qt, QSize, pyqtSignal, QTimer
-from PyQt6.QtGui import QIcon, QFont, QColor, QAction
+from PyQt6.QtGui import QIcon, QFont, QColor, QAction, QKeySequence, QShortcut
+from PyQt6.QtCore import QSettings
 
 from src.config.settings import AppSettings
 from src.gui.app_controller import AppController
@@ -53,25 +54,6 @@ class MainWindow(QMainWindow):
         self.error_signal.connect(self._update_error_log)
         self.model_status_signal.connect(self._update_model_status)
         
-        # Setup push-to-talk state
-        self.ptt_active = False
-        
-        # Setup keyboard shortcuts with more robust methods
-        from PyQt6.QtGui import QKeySequence, QShortcut
-        self.ptt_shortcut = QShortcut(QKeySequence("Ctrl+Alt+T"), self)
-        self.ptt_shortcut.activated.connect(self._on_ptt_key_pressed)
-        self.ptt_shortcut.activatedAmbiguously.connect(self._on_ptt_key_pressed)
-        
-        # Additional shortcut for Alt+T (works better on some systems)
-        self.alt_t_shortcut = QShortcut(QKeySequence("Alt+T"), self)
-        self.alt_t_shortcut.activated.connect(self._on_ptt_key_pressed)
-        
-        # Make sure window has focus to receive keyboard events
-        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
-        
-        # Install event filter for key release detection
-        self.installEventFilter(self)
-        
         # Setup window properties
         self.setWindowTitle("Speech-to-Text Tool")
         self.setMinimumSize(800, 600)
@@ -79,6 +61,9 @@ class MainWindow(QMainWindow):
         # Initialize UI and create menu - must be done before updating status
         self._init_ui()
         self._create_menu()
+        
+        # Create global keyboard shortcuts
+        self._setup_shortcuts()
         
         # Load microphones
         self._load_microphones()
@@ -233,14 +218,14 @@ class MainWindow(QMainWindow):
         self.start_button.setIcon(QIcon.fromTheme("media-record"))
         self.start_button.setMinimumWidth(150)
         self.start_button.clicked.connect(self._on_start_clicked)
-        self.start_button.setToolTip("Start continuous listening - speech segments will be automatically transcribed")
+        self.start_button.setToolTip("Start continuous listening - speech segments will be automatically transcribed (F5)")
         
         self.stop_button = QPushButton("Stop")
         self.stop_button.setIcon(QIcon.fromTheme("media-playback-stop"))
         self.stop_button.setMinimumWidth(100)
         self.stop_button.clicked.connect(self._on_stop_clicked)
         self.stop_button.setEnabled(False)
-        self.stop_button.setToolTip("Stop listening completely")
+        self.stop_button.setToolTip("Stop listening completely (F6)")
         
         # Add all buttons
         controls_layout.addWidget(self.start_button)
@@ -281,7 +266,7 @@ class MainWindow(QMainWindow):
         top_bar.addWidget(status_group)
         
         # Add instruction labels
-        self.continuous_instruction_label = QLabel("🎤 CONTINUOUS MODE: Click 'Start Listening', speak naturally, and pause between sentences. Speech will be transcribed automatically after each pause.")
+        self.continuous_instruction_label = QLabel("🎤 Press F5 to start listening and F6 to stop")
         self.continuous_instruction_label.setStyleSheet("color: #4CAF50; padding: 5px; background-color: #2A2A2A; border-radius: 3px;")
         self.continuous_instruction_label.setWordWrap(True)
         main_layout.addWidget(self.continuous_instruction_label)
@@ -304,6 +289,11 @@ class MainWindow(QMainWindow):
         self.history_list.setAlternatingRowColors(True)
         self.history_list.setWordWrap(True)
         self.history_list.setMinimumHeight(200)
+        
+        # Add context menu and double-click for copying
+        self.history_list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.history_list.customContextMenuRequested.connect(self._show_history_context_menu)
+        self.history_list.itemDoubleClicked.connect(self._copy_history_item)
         
         history_layout.addWidget(self.history_list)
         
@@ -392,10 +382,21 @@ class MainWindow(QMainWindow):
         file_menu = QMenu("File", self)
         menu_bar.addMenu(file_menu)
         
+        # Start/Stop actions (without shortcuts - we'll add them separately)
+        start_action = QAction("Start Listening", self)
+        start_action.triggered.connect(self._on_start_clicked)
+        file_menu.addAction(start_action)
+        
+        stop_action = QAction("Stop Listening", self)
+        stop_action.triggered.connect(self._on_stop_clicked)
+        file_menu.addAction(stop_action)
+        
+        file_menu.addSeparator()
+        
         # Export history action
         export_action = QAction("Export Transcription History...", self)
         export_action.triggered.connect(self._on_export_history_clicked)
-        export_action.setShortcut("Ctrl+E")
+        export_action.setShortcut("Ctrl+E")  # Keep this as it doesn't conflict
         file_menu.addAction(export_action)
         
         # Clear history action
@@ -418,106 +419,49 @@ class MainWindow(QMainWindow):
         exit_action.triggered.connect(self.close)
         exit_action.setShortcut("Alt+F4")
         file_menu.addAction(exit_action)
+    
+    def _setup_shortcuts(self):
+        """Set up global keyboard shortcuts for main functionality"""
+        # Import locally to ensure we have the right version
+        from PyQt6.QtCore import Qt
+        from PyQt6.QtGui import QKeySequence, QShortcut
         
-        # Transcription menu
-        transcription_menu = QMenu("Transcription", self)
-        menu_bar.addMenu(transcription_menu)
+        # Remove any existing shortcuts first to avoid ambiguity
+        if hasattr(self, 'start_shortcut'):
+            self.start_shortcut.setEnabled(False)
+            self.start_shortcut.deleteLater()
+            
+        if hasattr(self, 'stop_shortcut'):
+            self.stop_shortcut.setEnabled(False)
+            self.stop_shortcut.deleteLater()
         
-        # Start transcription action
-        start_action = QAction("Start Listening", self)
-        start_action.triggered.connect(self._on_start_clicked)
-        start_action.setShortcut("F5")
-        transcription_menu.addAction(start_action)
+        # Create F5 shortcut for Start Listening with ApplicationShortcut context
+        self.start_shortcut = QShortcut(self)
+        self.start_shortcut.setKey(QKeySequence("F5"))
+        self.start_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
+        self.start_shortcut.activated.connect(self._shortcut_start_listening)
         
-        # Stop transcription action
-        stop_action = QAction("Stop Listening", self)
-        stop_action.triggered.connect(self._on_stop_clicked)
-        stop_action.setShortcut("F6")
-        transcription_menu.addAction(stop_action)
+        # Create F6 shortcut for Stop Listening with ApplicationShortcut context
+        self.stop_shortcut = QShortcut(self)
+        self.stop_shortcut.setKey(QKeySequence("F6"))
+        self.stop_shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
+        self.stop_shortcut.activated.connect(self._shortcut_stop_listening)
         
-        transcription_menu.addSeparator()
-        
-        # Mode submenu
-        mode_menu = QMenu("Transcription Mode", self)
-        transcription_menu.addMenu(mode_menu)
-        
-        # Continuous mode action
-        self.continuous_mode_action = QAction("Continuous Mode (VAD)", self)
-        self.continuous_mode_action.setCheckable(True)
-        self.continuous_mode_action.setChecked(True)
-        self.continuous_mode_action.triggered.connect(self._on_continuous_mode_clicked)
-        mode_menu.addAction(self.continuous_mode_action)
-        
-        # Push to talk mode action
-        self.ptt_mode_action = QAction("Push to Talk (Ctrl+Alt+T)", self)
-        self.ptt_mode_action.setCheckable(True)
-        self.ptt_mode_action.setChecked(False)
-        self.ptt_mode_action.triggered.connect(self._on_ptt_mode_clicked)
-        mode_menu.addAction(self.ptt_mode_action)
-        
-        # Model menu
-        model_menu = QMenu("Model", self)
-        menu_bar.addMenu(model_menu)
-        
-        # Model info action
-        model_info_action = QAction("Model Information...", self)
-        model_info_action.triggered.connect(self._on_model_info_clicked)
-        model_menu.addAction(model_info_action)
-        
-        # Load model action
-        self.load_model_action = QAction("Load Model", self)
-        self.load_model_action.triggered.connect(self._on_load_model_clicked)
-        model_menu.addAction(self.load_model_action)
-        
-        # Unload model action
-        self.unload_model_action = QAction("Unload Model", self)
-        self.unload_model_action.triggered.connect(self._on_unload_model_clicked)
-        self.unload_model_action.setEnabled(False)
-        model_menu.addAction(self.unload_model_action)
-        
-        # View menu
-        view_menu = QMenu("View", self)
-        menu_bar.addMenu(view_menu)
-        
-        # Show transcription history tab
-        show_history_action = QAction("Transcription History", self)
-        show_history_action.triggered.connect(lambda: self.tabs.setCurrentIndex(0))
-        show_history_action.setShortcut("Ctrl+1")
-        view_menu.addAction(show_history_action)
-        
-        # Show error log tab
-        show_error_log_action = QAction("Error Log", self)
-        show_error_log_action.triggered.connect(lambda: self.tabs.setCurrentIndex(1))
-        show_error_log_action.setShortcut("Ctrl+2")
-        view_menu.addAction(show_error_log_action)
-        
-        # Show VAD info tab
-        show_vad_info_action = QAction("VAD Info", self)
-        show_vad_info_action.triggered.connect(lambda: self.tabs.setCurrentIndex(2))
-        show_vad_info_action.setShortcut("Ctrl+3")
-        view_menu.addAction(show_vad_info_action)
-        
-        # Help menu
-        help_menu = QMenu("Help", self)
-        menu_bar.addMenu(help_menu)
-        
-        # Help action
-        help_action = QAction("User Guide", self)
-        help_action.triggered.connect(self._on_help_clicked)
-        help_action.setShortcut("F1")
-        help_menu.addAction(help_action)
-        
-        # Check for updates action
-        updates_action = QAction("Check for Updates", self)
-        updates_action.triggered.connect(self._on_check_updates_clicked)
-        help_menu.addAction(updates_action)
-        
-        help_menu.addSeparator()
-        
-        # About action
-        about_action = QAction("About", self)
-        about_action.triggered.connect(self._on_about_clicked)
-        help_menu.addAction(about_action)
+        self.logger.info("Keyboard shortcuts setup completed")
+    
+    def _shortcut_start_listening(self):
+        """Handler for F5 shortcut - Start listening"""
+        self.logger.info("F5 shortcut triggered - starting listening")
+        # Only start if the button is enabled
+        if self.start_button.isEnabled():
+            self._on_start_clicked()
+    
+    def _shortcut_stop_listening(self):
+        """Handler for F6 shortcut - Stop listening"""
+        self.logger.info("F6 shortcut triggered - stopping listening")
+        # Only stop if the button is enabled
+        if self.stop_button.isEnabled():
+            self._on_stop_clicked()
     
     def _check_permission(self):
         """Check microphone permission and request if needed"""
@@ -598,11 +542,8 @@ class MainWindow(QMainWindow):
             self.start_button.setEnabled(False)
             self.stop_button.setEnabled(True)
             
-            # Update status labels based on mode
-            if self.controller.is_push_to_talk_mode():
-                self.vad_status_label.setText("Push-to-Talk Mode: Active - Press hotkey or button to speak")
-            else:
-                self.vad_status_label.setText("VAD: Active - Detecting speech segments automatically")
+            # Update status labels
+            self.vad_status_label.setText("VAD: Active - Detecting speech segments automatically")
             
             # Start the recording indicator animation
             self.recording_indicator_active = True
@@ -610,23 +551,17 @@ class MainWindow(QMainWindow):
             
             self.logger.info("Continuous transcription started")
             
-            # Show message box with usage instructions based on selected mode
-            if self.controller.is_push_to_talk_mode():
-                QMessageBox.information(
-                    self,
-                    "Push-to-Talk Mode",
-                    "The application is now in push-to-talk mode:\n\n"
-                    "1. Press and hold Ctrl+Alt+T while speaking\n"
-                    "2. Release the keys when done to trigger transcription\n"
-                    "3. Focus your cursor in the desired text field before pressing the hotkey\n"
-                    "4. Click 'Stop' only when you're completely done with all transcription\n\n"
-                    "This mode gives you more control over when transcription happens."
-                )
-            else:
-                QMessageBox.information(
-                    self,
-                    "Continuous Transcription Mode",
-                    "The application is now in continuous listening mode:\n\n"
+            # Check if we should show the popup
+            settings = QSettings("STT", "SpeechToTextTool")
+            show_popup = settings.value("ShowContinuousInstructions", True, type=bool)
+            
+            if show_popup:
+                # Create custom message box with checkbox
+                msg_box = QMessageBox(self)
+                msg_box.setIcon(QMessageBox.Icon.Information)
+                msg_box.setWindowTitle("Continuous Transcription Mode")
+                msg_box.setText("The application is now in continuous listening mode:")
+                msg_box.setInformativeText(
                     "1. Speak naturally into your microphone\n"
                     "2. Pause slightly between sentences\n"
                     "3. Each speech segment will be transcribed automatically after you pause\n"
@@ -634,6 +569,18 @@ class MainWindow(QMainWindow):
                     "5. Click 'Stop' only when you're completely done with transcription\n\n"
                     "You don't need to stop and restart between speech segments."
                 )
+                
+                # Add checkbox
+                dont_show_checkbox = QCheckBox("Don't show this message again")
+                msg_box.setCheckBox(dont_show_checkbox)
+                
+                # Run the dialog
+                msg_box.exec()
+                
+                # Save preference if checkbox is checked
+                if dont_show_checkbox.isChecked():
+                    settings.setValue("ShowContinuousInstructions", False)
+                    self.logger.info("User chose to hide continuous mode instructions")
         else:
             self.logger.error("Failed to start transcription")
             self._update_error_log("Failed to start transcription. Check microphone access.")
@@ -1024,7 +971,7 @@ class MainWindow(QMainWindow):
                 <li>Each speech segment will be automatically detected and transcribed</li>
                 <li>Focus your cursor in the desired text field <i>before</i> speaking</li>
                 <li>Text will be inserted into the focused field after each speech segment</li>
-                <li>Click "Stop" only when you're completely done with all transcription</li>
+                <li>Click "Stop" only when you're completely done with transcription</li>
             </ol>
             
             <h4>2. Push-to-Talk Mode (New!)</h4>
@@ -1071,116 +1018,10 @@ class MainWindow(QMainWindow):
         )
     
     def eventFilter(self, obj, event):
-        """Filter events to detect key releases for push-to-talk"""
-        from PyQt6.QtCore import QEvent
-        from PyQt6.QtGui import QKeyEvent
-        
-        if event.type() == QEvent.Type.KeyRelease:
-            # The event is already a QKeyEvent - no need to convert it
-            if isinstance(event, QKeyEvent):
-                # Check for Ctrl+Alt+T release
-                if (self.ptt_active and 
-                    (event.key() == Qt.Key.Key_T or 
-                     event.key() == Qt.Key.Key_Control or 
-                     event.key() == Qt.Key.Key_Alt)):
-                    self._on_ptt_key_released()
-                
+        """Filter events"""
+        # Simply pass events to the parent class
         return super().eventFilter(obj, event)
-    
-    def _on_ptt_key_pressed(self):
-        """Handle push-to-talk key press"""
-        try:
-            # Check if we're in a state where PTT should work
-            if not self.controller.is_transcribing:
-                self.logger.debug("Push-to-talk key pressed, but transcription is not active")
-                return
-                
-            if not self.controller.is_push_to_talk_mode():
-                self.logger.debug("Push-to-talk key pressed, but not in PTT mode")
-                return
-                
-            # Set active state and start recording
-            if not self.ptt_active:
-                self.ptt_active = True
-                self.logger.info("Push-to-talk activated (hotkey pressed)")
-                # Show visual feedback
-                self.recording_indicator.setStyleSheet("color: green; font-size: 16px;")
-                self.speech_indicator.setStyleSheet("color: green;")
-                self.speech_indicator.setText("Speech: Active (Push-to-Talk)")
-                # Start recording
-                self.controller.push_to_talk_start()
-        except Exception as e:
-            self.logger.error(f"Error in push-to-talk key press handler: {str(e)}")
-    
-    def _on_ptt_key_released(self):
-        """Handle push-to-talk key release"""
-        try:
-            if self.ptt_active:
-                self.ptt_active = False
-                self.logger.info("Push-to-talk deactivated (hotkey released)")
-                # Show visual feedback
-                self.recording_indicator.setStyleSheet("color: red; font-size: 16px;")
-                self.speech_indicator.setStyleSheet("color: gray;")
-                self.speech_indicator.setText("Speech: Processing...")
-                # End recording and process audio
-                self.controller.push_to_talk_end()
-        except Exception as e:
-            self.logger.error(f"Error in push-to-talk key release handler: {str(e)}")
-    
-    def _on_continuous_mode_clicked(self):
-        """Switch to continuous mode"""
-        # Update both mode actions to ensure they're in sync
-        self.continuous_mode_action.setChecked(True)
-        self.ptt_mode_action.setChecked(False)
-        
-        # Update controller
-        self.controller.set_push_to_talk_mode(False)
-        
-        # Update UI
-        self.continuous_instruction_label.setVisible(True)
-        
-        self.logger.info("Switched to continuous mode")
-        
-        # If currently transcribing, restart to apply mode change
-        if self.controller.is_transcribing:
-            was_active = self.controller.is_transcribing
-            self.controller.stop_transcription()
-            if was_active:
-                self.controller.start_transcription()
-    
-    def _on_ptt_mode_clicked(self):
-        """Switch to push-to-talk mode"""
-        # Update both mode actions to ensure they're in sync
-        self.continuous_mode_action.setChecked(False)
-        self.ptt_mode_action.setChecked(True)
-        
-        # Update controller
-        self.controller.set_push_to_talk_mode(True)
-        
-        # Update UI
-        self.continuous_instruction_label.setVisible(False)
-        
-        self.logger.info("Switched to push-to-talk mode")
-        
-        # If currently transcribing, restart to apply mode change
-        if self.controller.is_transcribing:
-            was_active = self.controller.is_transcribing
-            self.controller.stop_transcription()
-            if was_active:
-                self.controller.start_transcription()
-                
-        # Show instructions for PTT mode
-        QMessageBox.information(
-            self,
-            "Push-to-Talk Mode",
-            "Push-to-Talk mode is now active:\n\n"
-            "1. Press and hold Ctrl+Alt+T while speaking, OR\n"
-            "2. Press and hold the 'Push to Talk' button while speaking\n"
-            "3. Release when done speaking to trigger transcription\n"
-            "4. Place your cursor where you want the text before speaking\n\n"
-            "This mode provides more control and faster response than continuous mode."
-        )
-    
+
     def closeEvent(self, event):
         """Handle window close event to clean up resources"""
         # Stop any active recording
@@ -1191,4 +1032,69 @@ class MainWindow(QMainWindow):
         self.recording_indicator_timer.stop()
         
         # Accept the close event
-        event.accept() 
+        event.accept()
+
+    def _show_history_context_menu(self, position):
+        """Show context menu for history items"""
+        # Get the item at the position
+        item = self.history_list.itemAt(position)
+        if not item:
+            return
+            
+        # Create context menu
+        context_menu = QMenu()
+        copy_action = context_menu.addAction("Copy")
+        copy_action.triggered.connect(lambda: self._copy_history_item(item))
+        
+        # Show the menu
+        context_menu.exec(self.history_list.mapToGlobal(position))
+    
+    def _copy_history_item(self, item):
+        """Copy the selected history item text to clipboard"""
+        # Get text from the item
+        text = item.text()
+        
+        # Strip timestamp if present
+        if "]" in text:
+            text = text.split("]", 1)[1].strip()
+        
+        # Copy to clipboard using direct Windows API approach
+        try:
+            # Use win32clipboard directly for Windows
+            import win32clipboard
+            import win32con
+            
+            # Open clipboard
+            win32clipboard.OpenClipboard()
+            
+            # Empty current contents
+            win32clipboard.EmptyClipboard()
+            
+            # Set new text (using Unicode format)
+            win32clipboard.SetClipboardData(win32con.CF_UNICODETEXT, text)
+            
+            # Close clipboard
+            win32clipboard.CloseClipboard()
+            
+            # Show brief animation feedback
+            original_color = item.background()
+            highlight_color = QColor("#4CAF50")  # Green highlight
+            
+            # Set highlighted background
+            item.setBackground(highlight_color)
+            
+            # Reset background after short delay
+            QTimer.singleShot(300, lambda: item.setBackground(original_color))
+            
+            self.logger.info(f"Copied text to clipboard: {text[:30]}...")
+            
+            # Show brief status message
+            status_bar = self.statusBar()
+            original_statusTip = status_bar.currentMessage()
+            status_bar.showMessage("Text copied to clipboard", 1500)  # Show for 1.5 seconds
+            QTimer.singleShot(1500, lambda: status_bar.showMessage(original_statusTip))
+            
+        except Exception as e:
+            self.logger.error(f"Error copying to clipboard: {str(e)}")
+            status_bar = self.statusBar()
+            status_bar.showMessage("Failed to copy text", 1500) 

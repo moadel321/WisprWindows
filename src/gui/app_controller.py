@@ -61,11 +61,6 @@ class AppController:
             audio_processor=self.audio_processor
         )
         
-        # Push to talk mode
-        self.push_to_talk_mode = settings.get("audio.push_to_talk", False)
-        self.push_to_talk_active = False
-        self.speech_buffer = []
-        
         # Set VAD callbacks
         self.vad_processor.set_callbacks(
             on_speech_start=self._on_speech_start,
@@ -218,16 +213,8 @@ class AppController:
             time_info: Timing information from PyAudio
         """
         try:
-            # If in push-to-talk mode, capture audio directly when active
-            if self.push_to_talk_mode:
-                if self.push_to_talk_active:
-                    # Preprocess and store audio
-                    processed_audio = self.audio_processor.preprocess_audio(audio_data)
-                    self.speech_buffer.append(processed_audio)
-            else:
-                # Pass audio data to VAD processor for automatic detection
-                self.vad_processor.process_audio(audio_data, time_info)
-            
+            # Pass audio data to VAD processor for automatic detection
+            self.vad_processor.process_audio(audio_data, time_info)
         except Exception as e:
             self.logger.error(f"Error processing audio: {str(e)}")
             if self.on_error_callback:
@@ -575,107 +562,4 @@ class AppController:
         Args:
             callback: Function to call with model status updates
         """
-        self.on_model_status_callback = callback
-        
-    def set_push_to_talk_mode(self, enabled: bool) -> None:
-        """
-        Enable or disable push-to-talk mode
-        
-        Args:
-            enabled: Whether push-to-talk mode should be enabled
-        """
-        self.push_to_talk_mode = enabled
-        self.settings.set("audio.push_to_talk", enabled)
-        self.logger.info(f"Push-to-talk mode {'enabled' if enabled else 'disabled'}")
-        
-    def is_push_to_talk_mode(self) -> bool:
-        """
-        Check if push-to-talk mode is enabled
-        
-        Returns:
-            bool: Whether push-to-talk mode is enabled
-        """
-        return self.push_to_talk_mode
-        
-    def push_to_talk_start(self) -> None:
-        """
-        Start recording for push-to-talk mode
-        Called when the push-to-talk hotkey is pressed
-        """
-        if not self.is_transcribing or not self.push_to_talk_mode:
-            return
-            
-        self.logger.info("Push-to-talk activated")
-        self.push_to_talk_active = True
-        self.speech_buffer = []
-        
-        # Notify UI of speech detection
-        if self.on_speech_detected_callback:
-            self.on_speech_detected_callback(True)
-    
-    def push_to_talk_end(self) -> None:
-        """
-        End recording for push-to-talk mode and process speech
-        Called when the push-to-talk hotkey is released
-        """
-        if not self.is_transcribing or not self.push_to_talk_mode or not self.push_to_talk_active:
-            return
-            
-        ptt_end_time = time.time()
-        trace_id = f"ptt_{int(ptt_end_time * 1000)}"
-        self.logger.info(f"[TRACE:{trace_id}] Push-to-talk deactivated")
-        self.push_to_talk_active = False
-        
-        # Notify UI of speech end
-        if self.on_speech_detected_callback:
-            self.on_speech_detected_callback(False)
-        
-        # Process the collected speech
-        if self.speech_buffer:
-            try:
-                self.logger.info(f"[TRACE:{trace_id}] Processing push-to-talk speech, buffer size: {len(self.speech_buffer)}")
-                process_start_time = time.time()
-                
-                # Concatenate all audio chunks
-                concat_start = time.time()
-                speech_audio = np.concatenate(self.speech_buffer)
-                concat_time = time.time() - concat_start
-                self.logger.info(f"[TRACE:{trace_id}] Concatenated audio buffer in {concat_time:.3f}s")
-                
-                # Create segment info
-                duration = len(speech_audio) / self.audio_processor.sample_rate
-                segment = {
-                    "audio": speech_audio,
-                    "start_time": ptt_end_time - duration,
-                    "end_time": ptt_end_time,
-                    "duration": duration,
-                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                    "trace_id": trace_id
-                }
-                
-                self.logger.info(f"[TRACE:{trace_id}] Push-to-talk speech duration: {duration:.2f}s")
-                
-                # Save WAV file
-                save_start = time.time()
-                timestamp = segment['timestamp'].replace(':', '-').replace(' ', '_')
-                segment_file = os.path.join(self.temp_dir, f"speech_ptt_{timestamp}.wav")
-                self.audio_processor.save_audio_to_wave(segment['audio'], segment_file)
-                save_time = time.time() - save_start
-                self.logger.info(f"[TRACE:{trace_id}] Saved audio to WAV in {save_time:.3f}s: {segment_file}")
-                
-                # Process with Whisper model
-                self.logger.info(f"[TRACE:{trace_id}] Starting speech segment processing")
-                self._process_speech_segment(segment_file, segment)
-                
-                total_prep_time = time.time() - process_start_time
-                self.logger.info(f"[TRACE:{trace_id}] Total push-to-talk preparation time: {total_prep_time:.3f}s")
-                
-            except Exception as e:
-                self.logger.error(f"[TRACE:{trace_id}] Error processing push-to-talk speech: {str(e)}")
-                if self.on_error_callback:
-                    self.on_error_callback(f"Error processing push-to-talk speech: {str(e)}")
-        else:
-            self.logger.warning(f"[TRACE:{trace_id}] No speech data collected during push-to-talk")
-        
-        # Clear buffer
-        self.speech_buffer = [] 
+        self.on_model_status_callback = callback 

@@ -17,8 +17,6 @@ DEFAULT_CHUNK_SIZE = 512  # Samples per buffer (reduced from 1024 for faster pro
 DEFAULT_FORMAT = "int16"  # Audio format
 DEFAULT_TEMP_DIR = "temp_audio"  # Temporary audio storage
 DEFAULT_WAVE_EXTENSION = ".wav"  # File extension for wave files
-DEFAULT_PUSH_TO_TALK = False  # Whether to use push-to-talk mode
-DEFAULT_PTT_HOTKEY = "Ctrl+Alt+T"  # Default push-to-talk hotkey
 
 # Audio processing
 DEFAULT_NORMALIZE = True  # Whether to normalize audio

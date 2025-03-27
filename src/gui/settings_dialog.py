@@ -23,8 +23,6 @@ from src.utils.constants import (
     DEFAULT_SAMPLE_RATE,
     DEFAULT_MAX_HISTORY_ENTRIES,
     DEFAULT_WHISPER_TIMEOUT,
-    DEFAULT_PUSH_TO_TALK,
-    DEFAULT_PTT_HOTKEY
 )
 
 
@@ -163,47 +161,6 @@ class SettingsDialog(QDialog):
         
         audio_layout.addWidget(audio_group)
         
-        # Input mode group
-        input_mode_group = QGroupBox("Input Mode")
-        input_mode_layout = QVBoxLayout(input_mode_group)
-        
-        # Mode selection
-        self.continuous_mode_radio = QRadioButton("Continuous Mode (VAD)")
-        self.ptt_mode_radio = QRadioButton("Push-to-Talk Mode")
-        
-        # Description labels
-        continuous_desc = QLabel("Automatically detects speech using Voice Activity Detection")
-        continuous_desc.setStyleSheet("color: #666666; font-size: 10px;")
-        
-        ptt_desc = QLabel("Manual control: press hotkey to record, release to transcribe")
-        ptt_desc.setStyleSheet("color: #666666; font-size: 10px;")
-        
-        # Hotkey selection for PTT
-        hotkey_layout = QHBoxLayout()
-        hotkey_label = QLabel("PTT Hotkey:")
-        self.hotkey_combo = QComboBox()
-        self.hotkey_combo.addItems([
-            "Ctrl+Alt+T", 
-            "Ctrl+Alt+S", 
-            "Ctrl+Shift+T",
-            "Ctrl+Space"
-        ])
-        
-        hotkey_layout.addWidget(hotkey_label)
-        hotkey_layout.addWidget(self.hotkey_combo)
-        
-        # Add to mode layout
-        input_mode_layout.addWidget(self.continuous_mode_radio)
-        input_mode_layout.addWidget(continuous_desc)
-        input_mode_layout.addSpacing(5)
-        input_mode_layout.addWidget(self.ptt_mode_radio)
-        input_mode_layout.addWidget(ptt_desc)
-        input_mode_layout.addSpacing(5)
-        input_mode_layout.addLayout(hotkey_layout)
-        
-        # Add to audio layout
-        audio_layout.addWidget(input_mode_group)
-        
         # VAD settings group
         vad_group = QGroupBox("Voice Activity Detection")
         vad_layout = QVBoxLayout(vad_group)
@@ -313,11 +270,6 @@ class SettingsDialog(QDialog):
             self.sample_rate_combo.setCurrentIndex(max(0, index))
             self.channels_combo.setCurrentIndex(0)  # Mono
             
-            # Input mode settings
-            self.continuous_mode_radio.setChecked(not DEFAULT_PUSH_TO_TALK)
-            self.ptt_mode_radio.setChecked(DEFAULT_PUSH_TO_TALK)
-            self.hotkey_combo.setCurrentText(DEFAULT_PTT_HOTKEY)
-            
             # VAD settings
             self.sensitivity_slider.setValue(int(DEFAULT_VAD_THRESHOLD * 100))
             self.window_size_spin.setValue(DEFAULT_VAD_WINDOW)
@@ -383,11 +335,6 @@ class SettingsDialog(QDialog):
                 self.sample_rate_combo.setCurrentText(str(DEFAULT_SAMPLE_RATE))
                 self.channels_combo.setCurrentIndex(0)  # Mono
                 
-                # Default input mode
-                self.continuous_mode_radio.setChecked(not DEFAULT_PUSH_TO_TALK)
-                self.ptt_mode_radio.setChecked(DEFAULT_PUSH_TO_TALK)
-                self.hotkey_combo.setCurrentText(DEFAULT_PTT_HOTKEY)
-                
             else:
                 # General settings
                 self.model_dir_edit.setText(self.settings.get("model.directory"))
@@ -403,12 +350,6 @@ class SettingsDialog(QDialog):
                 # Audio settings
                 self.sample_rate_combo.setCurrentText(str(self.settings.get("audio.sample_rate", DEFAULT_SAMPLE_RATE)))
                 self.channels_combo.setCurrentIndex(self.settings.get("audio.channels", 1) - 1)
-                
-                # Input mode settings
-                push_to_talk = self.settings.get("audio.push_to_talk", DEFAULT_PUSH_TO_TALK)
-                self.continuous_mode_radio.setChecked(not push_to_talk)
-                self.ptt_mode_radio.setChecked(push_to_talk)
-                self.hotkey_combo.setCurrentText(self.settings.get("audio.ptt_hotkey", DEFAULT_PTT_HOTKEY))
                 
             self._on_sensitivity_changed(self.sensitivity_slider.value())  # Update sensitivity label
             
@@ -430,11 +371,6 @@ class SettingsDialog(QDialog):
             self.settings.set("audio.sample_rate", int(self.sample_rate_combo.currentText()))
             channels = 1 if self.channels_combo.currentIndex() == 0 else 2
             self.settings.set("audio.channels", channels)
-            
-            # Input mode settings
-            push_to_talk = self.ptt_mode_radio.isChecked()
-            self.settings.set("audio.push_to_talk", push_to_talk)
-            self.settings.set("audio.ptt_hotkey", self.hotkey_combo.currentText())
             
             # VAD settings
             sensitivity = self.sensitivity_slider.value() / 100.0
