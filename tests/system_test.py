@@ -13,6 +13,9 @@ import logging
 import argparse
 from pathlib import Path
 import torch
+import tempfile
+from unittest.mock import patch, MagicMock
+import numpy as np
 
 # Add parent directory to path to allow importing modules
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
@@ -24,6 +27,7 @@ from src.audio.vad_processor import VADProcessor
 from src.models.vad_model import SileroVAD
 from src.models.faster_whisper_model import FasterWhisperModel
 from src.text_insertion.text_inserter import TextInserter
+from src.gui.app_controller import AppController
 
 
 def test_microphone_enumeration():
@@ -55,30 +59,35 @@ def test_vad_model_loading():
         return False
 
 
-def test_whisper_model_loading(model_path):
-    """Test Whisper model loading"""
-    print("\n=== Testing Whisper Model Loading ===")
-    try:
-        whisper_model = FasterWhisperModel(
-            model_dir=model_path, 
-            model_name="large-v3",
-            device="cuda" if torch.cuda.is_available() else "cpu",
-            compute_type="float16" if torch.cuda.is_available() else "int8"
-        )
-        result = whisper_model.load_model()
+def test_whisper_model_loading():
+    """Test loading the Whisper model"""
+    # Skip the actual model loading for automated tests
+    if os.environ.get('SKIP_MODEL_TESTS', 'false').lower() == 'true':
+        print("Skipping actual model loading test")
+        return
         
-        if result["success"]:
-            print(f"✅ Faster Whisper model loaded successfully")
-            print(f"  Device: {whisper_model.device}")
-            print(f"  Compute type: {whisper_model.compute_type}")
-            print(f"  Language: {whisper_model.language}")
-            return True
-        else:
-            print(f"❌ Failed to load Faster Whisper model: {result['error']}")
-            return False
-    except Exception as e:
-        print(f"❌ Failed to load Faster Whisper model: {str(e)}")
-        return False
+    # Mock the model loading to avoid actual downloads and initialization
+    with patch('src.models.faster_whisper_model.download_model', return_value="/mock/path/to/model"):
+        with patch('src.models.faster_whisper_model.WhisperModel') as mock_whisper:
+            # Set up the mock
+            mock_instance = MagicMock()
+            mock_instance.transcribe.return_value = iter([MagicMock(text="Test transcription")])
+            mock_whisper.return_value = mock_instance
+        
+            # Create model
+            model = FasterWhisperModel(
+                model_dir=tempfile.mkdtemp(),
+                model_name="distil-large-v3",
+                language="en",
+                device="cpu",
+                compute_type="int8"
+            )
+            
+            # Test loading
+            result = model.load_model()
+            assert result, "Model loading failed"
+            assert model.is_loaded, "Model not marked as loaded"
+            assert model._model is not None, "Model instance not set"
 
 
 def test_text_insertion():
@@ -117,129 +126,107 @@ def test_text_insertion():
         return False
 
 
-def test_end_to_end(model_path, test_duration=10):
-    """
-    Test end-to-end workflow with live audio
-    
-    Args:
-        model_path: Path to Whisper model directory
-        test_duration: Duration of the test in seconds
-    """
-    print("\n=== Testing End-to-End Workflow ===")
-    
-    # Initialize components
-    settings = AppSettings()
-    
-    # Initialize audio components
-    mic_manager = MicrophoneManager()
-    audio_processor = AudioProcessor(
-        sample_rate=16000,
-        channels=1
-    )
-    
-    # Initialize VAD processor
-    vad_processor = VADProcessor(
-        sample_rate=16000,
-        vad_threshold=0.5,
-        window_size_ms=30,
-        audio_processor=audio_processor
-    )
-    
-    # Initialize Whisper model
-    whisper_model = FasterWhisperModel(
-        model_dir=model_path,
-        model_name="large-v3",
-        language="en",
-        device="cuda" if torch.cuda.is_available() else "cpu",
-        compute_type="float16" if torch.cuda.is_available() else "int8"
-    )
-    
-    # Initialize text inserter
-    text_inserter = TextInserter()
-    
-    # Load model
-    result = whisper_model.load_model()
-    if not result["success"]:
-        print(f"❌ Failed to load Faster Whisper model: {result['error']}")
-        return False
-    
-    # Get available microphones
-    mics = mic_manager.get_available_microphones()
-    if not mics:
-        print("❌ No microphones available")
-        return False
-    
-    # Select first microphone
-    mic_manager.select_microphone(mics[0]["id"])
-    print(f"Selected microphone: {mics[0]['name']}")
-    
-    # Setup callbacks
-    def on_speech_detected(is_speech):
-        status = "SPEECH DETECTED" if is_speech else "No speech"
-        print(f"\r{status}", end="")
-    
-    def on_speech_segment(audio_file, segment_info):
-        print(f"\nTranscribing segment ({segment_info['duration']:.1f}s)...")
+def test_end_to_end():
+    """Test the end-to-end process"""
+    # Skip this test as it requires real microphone and model
+    if 'CI' in os.environ or os.environ.get('SKIP_E2E_TESTS', 'false').lower() == 'true':
+        print("Skipping end-to-end test in CI environment")
+        return
         
-        # Transcribe audio
-        result = whisper_model.transcribe(audio_file)
-        
-        if result["success"]:
-            transcription = result["text"]
-            print(f"Transcription: \"{transcription}\"")
-            
-            # Try to insert text
-            print("Checking for editable text field...")
-            if text_inserter.is_text_editable():
-                if text_inserter.insert_text(transcription):
-                    print("✅ Text inserted successfully")
-                else:
-                    print("❌ Failed to insert text")
-            else:
-                print("❌ No editable text field focused")
-        else:
-            print(f"❌ Transcription failed: {result['error']}")
-    
-    # Set callbacks
-    vad_processor.set_callbacks(
-        on_speech_detected=on_speech_detected
-    )
-    vad_processor.on_speech_end_callback = on_speech_segment    
-    
-    # Start processing
-    print("\nPreparing to record. Please focus a text field and speak clearly.")
-    print(f"Recording will last for {test_duration} seconds...")
-    time.sleep(2)
-    
+    # Create temporary files
+    temp_dir = tempfile.mkdtemp()
     try:
-        # Start processing
-        vad_processor.start_processing()
+        # Create settings
+        settings = AppSettings()
+        settings.set("model.directory", temp_dir)
+        settings.set("model.name", "distil-large-v3")
+        settings.set("model.compute_type", "int8")
+        settings.set("audio.sample_rate", 16000)
+        settings.set("audio.channels", 1)
         
-        # Start recording
-        audio_processor.start_recording(mic_manager)
-        
-        # Wait for test duration
-        for i in range(test_duration, 0, -1):
-            time.sleep(1)
-        
-        # Stop recording
-        audio_processor.stop_recording()
-        
-        # Stop processing
-        vad_processor.stop_processing()
-        
-        print("\n✅ End-to-end test completed")
-        return True
-    except Exception as e:
-        print(f"\n❌ Error during end-to-end test: {str(e)}")
-        return False
+        # Create controller with extensive mocking
+        with patch('src.models.faster_whisper_model.download_model', return_value="/mock/path/to/model"):
+            with patch('src.models.faster_whisper_model.WhisperModel') as mock_whisper:
+                with patch('src.models.vad_model.SileroVAD.load_model', return_value=True):
+                    with patch('src.audio.microphone.MicrophoneManager.get_available_microphones', 
+                               return_value=[{"id": 0, "name": "Test Mic", "channels": 1}]):
+                        with patch('src.text_insertion.text_inserter.win32gui'):
+                        
+                            # Set up the mock model
+                            mock_instance = MagicMock()
+                            mock_instance.transcribe.return_value = iter([MagicMock(text="Test transcription")])
+                            mock_whisper.return_value = mock_instance
+                            
+                            # Create controller
+                            controller = AppController(settings)
+                            
+                            # Mock microphone and VAD
+                            controller.mic_manager.start_recording = MagicMock(return_value=True)
+                            controller.mic_manager.stop_recording = MagicMock(return_value=True)
+                            controller.vad_processor.start_processing = MagicMock(return_value=True)
+                            controller.vad_processor.stop_processing = MagicMock(return_value=True)
+                            
+                            # Track callback results
+                            model_loaded = False
+                            transcription_text = None
+                            
+                            def model_status_callback(is_loaded, error=None):
+                                nonlocal model_loaded
+                                model_loaded = is_loaded
+                            
+                            def transcription_callback(text, success=False):
+                                nonlocal transcription_text
+                                transcription_text = text
+                            
+                            # Set callbacks
+                            controller.set_model_status_callback(model_status_callback)
+                            controller.set_transcription_callback(transcription_callback)
+                            
+                            # Test model loading
+                            controller.load_model()
+                            assert model_loaded, "Model not loaded"
+                            
+                            # Test start/stop transcription
+                            result = controller.start_transcription()
+                            assert result, "Failed to start transcription"
+                            assert controller.is_transcribing, "Controller not in transcribing state"
+                            
+                            # Simulate speech detection and processing
+                            # Create audio segment
+                            segment = {
+                                "audio": np.zeros(16000, dtype=np.float32),
+                                "start_time": time.time() - 1,
+                                "end_time": time.time(),
+                                "duration": 1.0,
+                                "timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
+                                "trace_id": "test_trace"
+                            }
+                            
+                            # Force the model into a loaded state
+                            controller.whisper_model._model = mock_instance
+                            controller.whisper_model.is_loaded = True
+                            controller.is_model_loaded = True
+                            
+                            # Call the speech end callback directly
+                            controller.vad_processor._on_speech_end(segment)
+                            
+                            # Wait for processing
+                            time.sleep(0.5)
+                            
+                            # Stop transcription
+                            result = controller.stop_transcription()
+                            assert result, "Failed to stop transcription"
+                            assert not controller.is_transcribing, "Controller still in transcribing state"
+    
     finally:
         # Clean up
-        try:
-            audio_processor.stop_recording()
-            vad_processor.stop_processing()
-        except:
-            pass
+        if os.path.exists(temp_dir):
+            for file in os.listdir(temp_dir):
+                try:
+                    os.remove(os.path.join(temp_dir, file))
+                except:
+                    pass
+            os.rmdir(temp_dir)
 
 
 def run_system_tests(model_path):
@@ -261,7 +248,7 @@ def run_system_tests(model_path):
     tests = {
         "Microphone Enumeration": test_microphone_enumeration,
         "VAD Model Loading": test_vad_model_loading,
-        "Whisper Model Loading": lambda: test_whisper_model_loading(model_path),
+        "Whisper Model Loading": test_whisper_model_loading,
         "Text Insertion": test_text_insertion
     }
     
@@ -278,7 +265,7 @@ def run_system_tests(model_path):
     # Run end-to-end test if all component tests passed
     if all(results.values()):
         print("\nAll component tests passed. Running end-to-end test...")
-        results["End-to-End Test"] = test_end_to_end(model_path)
+        results["End-to-End Test"] = test_end_to_end()
     
     # Print summary
     print("\n=== Test Results Summary ===")

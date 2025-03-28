@@ -59,7 +59,7 @@ class MainWindow(QMainWindow):
         self.previous_geometry = None
         
         # Setup window properties
-        self.setWindowTitle("Speech-to-Text Tool")
+        self.setWindowTitle("WisprWindows")
         self.setMinimumSize(800, 600)
         
         # Initialize UI and create menu - must be done before updating status
@@ -889,7 +889,7 @@ class MainWindow(QMainWindow):
         # Create styled about message
         about_text = f"""
         <div style="text-align: center;">
-            <h1 style="color: #3c78d8;">Speech-to-Text Tool</h1>
+            <h1 style="color: #3c78d8;">WisprWindows</h1>
             <p style="font-size: 14px;">Version {APP_VERSION}</p>
             <hr style="width: 80%;">
             <p>A productivity tool for converting speech to text using local processing.</p>
@@ -917,7 +917,7 @@ class MainWindow(QMainWindow):
         </div>
         """
         
-        QMessageBox.about(self, "About Speech-to-Text Tool", about_text)
+        QMessageBox.about(self, "About WisprWindows", about_text)
     
     def _on_export_history_clicked(self):
         """Handle export history button click"""
