@@ -1,23 +1,16 @@
 # Speech-to-Text Productivity Tool for Windows
 
-A Windows desktop application that enhances productivity by converting spoken words into text. The application leverages the Faster Whisper implementation of the Whisper model for high-performance speech recognition, with all processing performed locally on your device to ensure data privacy.
+The bandwidth in speech is much higher than typing, this is a Windows desktop application that enhances productivity by converting spoken words into text. The application leverages the Faster Whisper implementation of the Whisper model for high-performance speech recognition, with all processing performed locally on your device to ensure data privacy.
 
 ## Features
 
 - Real-time speech-to-text transcription with up to 4x faster processing than normal whisper
 - Two input modes:
   - **Continuous Mode**: Automatically detects speech using VAD
-  - **Push-to-Talk Mode**: Press and hold to record speech, release to transcribe (using Ctrl+Alt+T or dedicated button)
-- Ultra-responsive speech detection with minimal latency
 - Local processing with no data leaving the device
-- Voice activity detection to filter out non-speech sounds
-- Precise insertion of transcribed text into the focused text box
-- Microphone selection from available devices
+- Inserts transcribed text into the focused text box
 - Transcription history with export capability
-- Modern, intuitive graphical user interface
-- Support for multiple Whisper model sizes (tiny to large-v3)
 - Optimized GPU inference with 8-bit quantization support
-- Detailed performance tracing for timing optimization
 
 ## System Requirements
 
@@ -28,7 +21,7 @@ A Windows desktop application that enhances productivity by converting spoken wo
   - GPU: (Optional) NVIDIA GPU with CUDA support (minimum 4GB VRAM, 8GB recommended)
   - Microphone: Any working microphone (built-in or external)
 - **Software:**
-  - Python 3.9+ with pip
+  - Python 3.12+ with pip
   - CUDA 12.1
 
 ## Installation
@@ -56,20 +49,14 @@ A Windows desktop application that enhances productivity by converting spoken wo
    # Download the model (choose one):
    # For best accuracy (larger model, but slower on CPU):
    python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='distil-whisper/distil-large-v3', local_dir='~/whisper-models/distil-large-v3', local_dir_use_symlinks=False)"
-   
-   # For balanced performance (recommended for CPU):
-   python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='Systran/faster-whisper-medium', local_dir='~/whisper-models/medium', local_dir_use_symlinks=False)"
-   
-   # For fastest processing (best for CPU):
-   python -c "from huggingface_hub import snapshot_download; snapshot_download(repo_id='Systran/faster-whisper-small', local_dir='~/whisper-models/small', local_dir_use_symlinks=False)"
-   ```
+
 
 4. **Run the application:**
    ```
    # CPU mode (default)
    python run.py
    
-   # Or with GPU acceleration if you have CUDA 12.x installed:
+   # Or with GPU acceleration if you have CUDA 12.x installed (highly recommended):
    python run.py  --use-cuda
    ```
 
@@ -102,35 +89,19 @@ A Windows desktop application that enhances productivity by converting spoken wo
 2. **Configure the model:**
    - Open Settings
    - Set the model directory to your downloaded model path
-   - Choose your preferred model size
-   - Select compute type:
-     - `int8`: Optimized for CPU processing (default and recommended)
-     - `float16`: If you've enabled GPU acceleration (see Optional GPU Setup)
-     - `int8_float16`: If you've enabled GPU with limited VRAM
 
-3. **Select your input mode:**
-   - Go to **Transcription > Transcription Mode** in the menu
-   - Choose between:
-     - **Continuous Mode**: Automatically detects when you speak (default)
-     - **Push-to-Talk Mode**: Only records when you hold down the hotkey
+3. **Select your microphone** from the dropdown menu.
 
-4. **Select your microphone** from the dropdown menu.
+4. **Click "Start Listening"** to begin.
 
-5. **Click "Start Listening"** to begin.
+5. **Focus on the text field** where you want the transcribed text to appear.
 
-6. **Focus on the text field** where you want the transcribed text to appear.
-
-7. **Using Continuous Mode:**
+6. **Using Continuous Mode:**
    - Simply speak naturally
    - Pause briefly between sentences
    - The application will automatically detect speech, transcribe it, and insert text
 
-8. **Using Push-to-Talk Mode:**
-   - Press and hold **Ctrl+Alt+T** or the **Push to Talk** button while speaking
-   - Release when done speaking to trigger transcription
-   - Text will be inserted almost immediately
-
-9. **Click "Stop"** when you're finished with all transcription.
+7. **Click "Stop"** when you're finished with all transcription.
 
 ## Command-line Arguments
 
@@ -144,20 +115,16 @@ The `run.py` script supports several command-line arguments:
 
 ## Building into a Standalone Windows Executable
 
-You can package the application as a standalone Windows executable using the included build script:
+Work in progress, will probably be in the next commit 
 
-```bash
-# Basic build (creates a directory with the executable and dependencies)
-python build_executable.py
 
-# Create a single-file executable
-python build_executable.py --one-file --no-console
+## To Do :
+- [ ] Fix Build process and run from standalone executable 
+- [ ] Use newer Whisper-V3 Turbo model
+- [ ] Increase accessibility for smaller GPU using smaller models 
+- [ ] Experiment with LLM-aided correction for inaccurate transcriptions 
+- [ ] Add the ability to dictate commands, 'close this windows' , 'press the maximize button' , etc....
 
-# Include a specific model in the package
-python build_executable.py --include-models --model-path ~/whisper-models/small
-```
-
-For detailed packaging instructions, see [the Packaging Guide](docs/PACKAGING_GUIDE.md).
 
 ## Testing
 
@@ -168,19 +135,11 @@ python run.py --test --model-path ~/whisper-models/distil-large-v3
 
 # Run performance tests
 python run.py --performance --model-path ~/whisper-models/distil-large-v3
-
-# Test Faster Whisper specifically
-python tests/test_faster_whisper.py --model-path ~/whisper-models/distil-large-v3  #--audio-file path/to/test.mp3
 ```
 
 ## Troubleshooting
 
 ### Performance Optimization
-
-- **Input Mode Selection**:
-  - Use **Push-to-Talk mode** for maximum responsiveness and control
-  - Use **Continuous mode** for hands-free operation with slightly higher latency
-  - Adjust VAD sensitivity in settings to find the optimal balance for your voice
 
 - **Reduce Latency**:
   - Run in debug mode (`--debug`) to see detailed performance traces
@@ -214,10 +173,6 @@ If you're experiencing the error `Library cublas64_12.dll is not found or cannot
 
 1. **Update to CUDA 12.1**: Install the latest CUDA 12.x toolkit and compatible cuDNN
 2. **Use CPU mode**: Our app now defaults to CPU mode for reliability
-3. **Try older faster-whisper**: Install specific versions that work with your CUDA:
-   ```
-   pip install --force-reinstall faster-whisper==0.9.0 ctranslate2==3.17.1
-   ```
 
 ### Model Loading Issues
 
@@ -239,7 +194,7 @@ This application processes all audio data locally on your device using Faster Wh
 
 ## License
 
-[Insert your license information here]
+To do whatever you want with it license
 
 ## Acknowledgements
 
