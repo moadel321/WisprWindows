@@ -37,6 +37,10 @@ class AppController:
         Args:
             settings: Application settings instance
         """
+        # --- START DIAGNOSTIC PRINT ---
+        print(f"APP_CONTROLLER INIT START: CUDA available? {torch.cuda.is_available()}")
+        # --- END DIAGNOSTIC PRINT ---
+
         self.logger = logging.getLogger(__name__)
         self.settings = settings
         

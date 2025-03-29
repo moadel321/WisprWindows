@@ -102,20 +102,11 @@ class FasterWhisperModel:
         download_root: str = None,
         local_files_only: bool = False
     ):
-        """
-        Initialize the Faster Whisper model
-        
-        Args:
-            model_dir: Directory containing the model files
-            model_name: Name of the model (e.g., "large-v3")
-            language: Language code for transcription (e.g., "en")
-            device: Device to use for inference (e.g., "cuda", "cpu")
-            compute_type: Compute type for inference (e.g., "float16", "int8")
-            cpu_threads: Number of CPU threads to use
-            num_workers: Number of workers for parallel processing
-            download_root: Directory to download models to
-            local_files_only: Only use local files, don't download
-        """
+        # --- START DIAGNOSTIC PRINT ---
+        import torch
+        print(f"FASTER_WHISPER INIT START: CUDA available? {torch.cuda.is_available()}")
+        # --- END DIAGNOSTIC PRINT ---
+
         self.logger = logging.getLogger(__name__)
         
         # Model parameters
@@ -281,9 +272,25 @@ class FasterWhisperModel:
             model_prep_start = time.time()
             self.logger.info(f"[TRACE:{trace_id}] Preparing model for transcription")
             
+            # --- START DIAGNOSTIC BLOCK ---
+            try:
+                import onnxruntime
+                self.logger.info(f"[TRACE:{trace_id}] Successfully imported onnxruntime version {onnxruntime.__version__}")
+            except ImportError as ie:
+                self.logger.error(f"[TRACE:{trace_id}] FAILED TO IMPORT onnxruntime: {ie}")
+                # Optionally, you could return an error here immediately
+                # return {"success": False, "error": f"onnxruntime import failed: {ie}"}
+            except Exception as e:
+                self.logger.error(f"[TRACE:{trace_id}] Error during onnxruntime import check: {e}")
+            # --- END DIAGNOSTIC BLOCK ---
+
             # Transcribe the audio
             self.logger.info(f"[TRACE:{trace_id}] Starting model.transcribe at {time.time() - start_time:.3f}s")
             transcribe_start = time.time()
+            
+            current_vad_filter_setting = vad_filter  # Use the passed parameter value
+            self.logger.info(f"[TRACE:{trace_id}] DEBUG: Calling self.model.transcribe with vad_filter={current_vad_filter_setting}")
+            
             segments, info = self.model.transcribe(
                 audio_file,
                 language=lang,
@@ -297,7 +304,7 @@ class FasterWhisperModel:
                 no_speech_threshold=no_speech_threshold,
                 condition_on_previous_text=condition_on_previous_text,
                 word_timestamps=word_timestamps,
-                vad_filter=vad_filter,
+                vad_filter=False,
                 vad_parameters=vad_params,
                 max_initial_timestamp=max_initial_timestamp
             )

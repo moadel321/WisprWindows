@@ -81,18 +81,9 @@ class SileroVAD:
         start_time = time.time()
         
         try:
-            # Check if CUDA should be used (controlled by environment variable)
-            use_cuda = os.environ.get("STT_USE_CUDA", "0").lower() in ("1", "true", "yes", "on")
-            
-            if use_cuda and torch.cuda.is_available():
-                self.device = torch.device('cuda')
-                self.logger.info("Using CUDA for Silero VAD")
-            else:
-                self.device = torch.device('cpu')
-                if use_cuda and not torch.cuda.is_available():
-                    self.logger.warning("CUDA requested but not available for Silero VAD, using CPU")
-                else:
-                    self.logger.info("Using CPU for Silero VAD")
+            # Force CPU usage for Silero VAD as requested
+            self.device = torch.device('cpu')
+            self.logger.info("Forcing CPU for Silero VAD")
             
             # Load the model from PyTorch Hub
             model, utils = torch.hub.load(

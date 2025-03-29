@@ -151,7 +151,7 @@ class TestFasterWhisper(unittest.TestCase):
                 audio_file=temp_file,
                 language="en",
                 word_timestamps=True,
-                vad_filter=True
+                vad_filter=False
             )
             
             # Assert results

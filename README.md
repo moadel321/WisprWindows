@@ -96,7 +96,7 @@ A Windows desktop application that enhances productivity by converting spoken wo
 
 1. **Start the application:**
    ```
-   python run.py
+   python run.py --use-cuda
    ```
 
 2. **Configure the model:**

@@ -10,9 +10,14 @@ import os
 import argparse
 import logging
 from pathlib import Path
+import torch
 
 # Add root directory to path
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
+
+# --- START DIAGNOSTIC PRINT ---
+print(f"RUN.PY START: CUDA available? {torch.cuda.is_available()}")
+# --- END DIAGNOSTIC PRINT ---
 
 def main():
     """Main entry point to launch the application"""

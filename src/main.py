@@ -20,6 +20,10 @@ from src.utils.logger import setup_logger
 from src.utils.constants import APP_NAME, APP_VERSION
 from src.audio.windows_permission import is_admin, check_microphone_permission
 
+# --- START DIAGNOSTIC PRINT ---
+import torch
+print(f"MAIN.PY START: CUDA available? {torch.cuda.is_available()}")
+# --- END DIAGNOSTIC PRINT ---
 
 def exception_hook(exc_type, exc_value, exc_traceback):
     """Handle uncaught exceptions and show error dialog"""
