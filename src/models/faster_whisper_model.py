@@ -207,7 +207,7 @@ class FasterWhisperModel:
         beam_size: int = 5,
         patience: float = 1.0,
         temperature: Tuple[float, ...] = (0.0, 0.2, 0.4, 0.6, 0.8, 1.0),
-        best_of: int = None,
+        best_of: int = 5,
         compression_ratio_threshold: float = 2.4,
         no_speech_threshold: float = 0.6,
         condition_on_previous_text: bool = True,

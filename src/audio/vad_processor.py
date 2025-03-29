@@ -292,7 +292,7 @@ class VADProcessor:
                 
                 # End speech after a very short period of silence (reduced from 8 to 4 frames)
                 # ~0.2 seconds of silence (varies based on processing speed)
-                if self.is_speech_active and self.consecutive_silence_frames >= 4:
+                if self.is_speech_active and self.consecutive_silence_frames >= 6:
                     self.logger.debug(f"[FRAME:{frame_id}] Speech ending after {self.consecutive_silence_frames} silence frames")
                     self._handle_speech_end()
                     self.consecutive_silence_frames = 0

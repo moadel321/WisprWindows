@@ -55,8 +55,8 @@ class AppController:
         )
         
         # Initialize VAD component
-        vad_sensitivity = settings.get("vad.sensitivity", 0.5)
-        vad_window_size = settings.get("vad.window_size_ms", 30)
+        vad_sensitivity = settings.get("vad.sensitivity", 0.9)
+        vad_window_size = settings.get("vad.window_size_ms", 60)
         
         self.vad_processor = VADProcessor(
             sample_rate=sample_rate,
