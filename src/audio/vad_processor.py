@@ -323,8 +323,31 @@ class VADProcessor:
         """
         self.is_speech_active = True
         self.speech_start_time = time.time()
-        self.current_speech_buffer = []
+
+        # --- Start: Prepend audio from detection buffer ---
+        prepend_ms = 150
+        prepend_samples = int(self.sample_rate * prepend_ms / 1000)
         
+        prepend_audio = np.array([]) # Default empty array
+        if self.audio_buffer:
+            try:
+                # Concatenate the deque content into a single array
+                detection_buffer_np = np.concatenate(list(self.audio_buffer))
+                
+                # Calculate start index, ensuring it's not negative
+                start_index = max(0, len(detection_buffer_np) - prepend_samples)
+                prepend_audio = detection_buffer_np[start_index:]
+                self.logger.debug(f"Prepending {len(prepend_audio)} samples ({len(prepend_audio)/self.sample_rate*1000:.1f}ms) from detection buffer")
+            except Exception as e:
+                self.logger.error(f"Error extracting prepend audio: {e}")
+
+        # Initialize buffer with prepended audio if any, otherwise start empty
+        if prepend_audio.size > 0:
+             self.current_speech_buffer = [prepend_audio]
+        else:
+             self.current_speech_buffer = []
+        # --- End: Prepend audio --- 
+
         self.logger.debug(f"Speech start detected at {self.speech_start_time}")
         
         # Call callback if registered
